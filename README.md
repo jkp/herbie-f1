@@ -46,3 +46,7 @@ Simulation code has no three.js dependency, so it runs headless in tests.
 npm test        # unit + full-race integration sim
 npm run e2e     # Playwright: load the game and drive
 ```
+
+## Go live
+
+Push to `main`. GitHub Actions runs the tests, builds and deploys to **https://jkp.github.io/herbie-f1/** in about a minute.
