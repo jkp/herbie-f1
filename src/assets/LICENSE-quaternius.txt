@@ -1,0 +1,3 @@
+person.glb and anims.glb are built (scripts/build-people.mjs) from Quaternius's
+"Universal Base Characters" and "Universal Animation Library" (Standard editions),
+https://quaternius.com — released under CC0 1.0 Universal (public domain).
