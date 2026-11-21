@@ -3,6 +3,8 @@
 export interface TrackDef {
   id: string; name: string; gp: string; country: string;
   width: number; runoff: number; officialLength: number;
+  urban: boolean; // a street circuit: paved ground instead of grass
+  geo: { lon0: number; lat0: number; kx: number; kz: number; sx: number; sz: number }; // lon/lat → x/z (see import-circuits.mjs)
   points: number[][]; // closed loop of [x, z] metres in race direction, starting on the start/finish line
 }
 
