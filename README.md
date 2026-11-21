@@ -2,7 +2,7 @@
 
 # herbie-f1
 
-A 3D Formula One racing game in the browser (three.js + TypeScript + Vite). Pick a circuit (Silverstone, Spa, Monza, Monaco, Red Bull Ring), a 2022 team and driver, and race the full 20-car grid.
+A 3D Formula One racing game in the browser (three.js + TypeScript + Vite). Pick one of 11 real circuits, a 2022 team and driver, a difficulty and race length, and race the full 20-car grid.
 
 ## Play
 
@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open the printed URL: **Race** → track → car → driver.
+Open the printed URL: **Quick race** → track → car → driver → settings.
 
 | Key | Action |
 | --- | --- |
@@ -24,7 +24,7 @@ Open the printed URL: **Race** → track → car → driver.
 
 Gamepads work too (left stick, RT throttle, LT brake). On an iPad or phone, on-screen ◀ ▶ / GAS / BRAKE buttons appear; tap to start.
 
-URL options: `?laps=5&size=10&countdown=0` (`size` trims the field).
+URL options: `?size=10&countdown=0` (`size` trims the field).
 
 ## Code
 

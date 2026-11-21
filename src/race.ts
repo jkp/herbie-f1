@@ -15,17 +15,25 @@ export interface Racer {
 }
 export interface Race {
   track: Track; profile: Float64Array; racers: Racer[]; player: Racer;
-  laps: number; time: number; countdown: number; phase: 'countdown' | 'racing' | 'finished';
+  laps: number; difficulty: number; time: number; countdown: number; phase: 'countdown' | 'racing' | 'finished';
   runoff: number;
 }
 
 const CAR_RADIUS = 2.2;
 
-// AI drive at this fraction of the speed profile times car pace and driver skill: beatable but quick.
-const AI_BASE = 0.95;
+// AI drive at `pace` × the speed profile × car pace × driver skill.
+export const DIFFICULTIES = [
+  { name: 'Beginner', pace: 0.84 },
+  { name: 'Amateur', pace: 0.87 },
+  { name: 'Semi-Pro', pace: 0.9 },
+  { name: 'Pro', pace: 0.93 },
+  { name: 'World Class', pace: 0.955 },
+  { name: 'Legendary', pace: 0.98 },
+];
 
 /** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
-export function createRace(track: Track, o: { laps: number; countdown: number; player: string; size?: number }): Race {
+export function createRace(track: Track, o: { laps: number; countdown: number; player: string; size?: number; difficulty?: number }): Race {
+  const difficulty = o.difficulty ?? 3;
   const field = [...DRIVERS].sort((a, b) => b.team.pace * b.skill - a.team.pace * a.skill);
   let entrants = field.slice(0, o.size ?? field.length);
   if (!entrants.some(d => d.code === o.player)) entrants = [...entrants.slice(0, -1), field.find(d => d.code === o.player)!];
@@ -35,14 +43,14 @@ export function createRace(track: Track, o: { laps: number; countdown: number; p
     const car = newCar(p.x - Math.sin(p.heading) * side, p.z + Math.cos(p.heading) * side, p.heading, d.team.pace);
     return {
       name: d.name, code: d.code, number: d.number, team: d.team, color: d.team.color,
-      isPlayer: d.code === o.player, skill: AI_BASE * d.team.pace * d.skill, lane: side * 0.4,
+      isPlayer: d.code === o.player, skill: DIFFICULTIES[difficulty].pace * d.team.pace * d.skill, lane: side * 0.4,
       car, i: p.i, s: track.length - back, lateral: side, total: -back,
       completed: 0, lapStart: 0, lastLap: 0, bestLap: 0, finished: false, finishTime: 0,
     };
   });
   return {
     track, profile: speedProfile(track), racers, player: racers.find(r => r.isPlayer)!,
-    laps: o.laps, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
+    laps: o.laps, difficulty, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
   };
 }
 

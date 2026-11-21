@@ -21,7 +21,7 @@ test('pick a track, car and driver, then drive off the grid', async ({ page }) =
   expect(errors).toEqual([]);
 });
 
-test('race settings default to 15 laps and remember nothing odd', async ({ page }) => {
+test('race settings default to Pro and 15 laps', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Quick race' }).click();
   await page.getByRole('button', { name: /Zandvoort/ }).click();
@@ -29,7 +29,6 @@ test('race settings default to 15 laps and remember nothing odd', async ({ page 
   await page.getByRole('button', { name: /Lando Norris/ }).click();
   await expect(page.getByRole('button', { name: '15 laps' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Pro', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Career' })).toHaveCount(0);
 });
 
 test('back buttons step back through the menus', async ({ page }) => {

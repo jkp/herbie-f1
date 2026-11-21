@@ -2,13 +2,12 @@ import * as THREE from 'three';
 import { buildTrack, pointAt, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
-import { createRace, stepRace, standings, type Race } from './race';
+import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar } from './scene';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
-  laps: Number(params.get('laps') ?? 3),
   size: params.has('size') ? Number(params.get('size')) : undefined,
   countdown: Number(params.get('countdown') ?? 4),
 };
@@ -32,7 +31,7 @@ addEventListener('resize', resize); resize();
 let race!: Race;
 let carMeshes: THREE.Group[] = [];
 let def: TrackDef, track!: Track, world: THREE.Group | null = null;
-let driver = 'VER';
+let driver = 'VER', difficulty = 3, laps = 15;
 
 function loadTrack(d: TrackDef) {
   if (def === d) return;
@@ -47,20 +46,21 @@ let camMode = 0; // 0 chase, 1 cockpit, 2 TV
 function clearCars() { carMeshes.forEach(m => scene.remove(m)); carMeshes = []; }
 function newRace() {
   clearCars();
-  race = createRace(track, { ...OPTS, player: driver });
+  race = createRace(track, { ...OPTS, player: driver, difficulty, laps });
   carMeshes = race.racers.map(r => { const m = makeCar(r.color); scene.add(m); return m; });
   lastPos = race.racers.length;
   camPos.set(0, 0, 0);
 }
 
 // --- menus: home → track → car → driver → race ---
-const MENU_SCREENS = ['home', 'tracks', 'teams', 'drivers'];
+const MENU_SCREENS = ['home', 'tracks', 'teams', 'drivers', 'settings'];
 function showMenu(id: string) {
   screen = 'menu';
   document.body.classList.add('menu');
   $('results').classList.add('hidden'); $('menu').classList.remove('hidden');
   for (const m of MENU_SCREENS) $(m).classList.toggle('hidden', m !== id);
   $(id).querySelector<HTMLElement>('.choices button, .primary')?.focus();
+  if (id === 'settings') renderSettings();
 }
 function startRace() {
   newRace(); screen = 'race';
@@ -84,12 +84,25 @@ $('tracklist').replaceChildren(...CIRCUITS.map(d => button(
 function showDrivers(t: Team) {
   $('driverlist').replaceChildren(...t.drivers.map(d => button(
     `<span class="num" style="color:${hex(t.color)}">${d.number}</span><b>${esc(d.name)}</b><small>${esc(t.name)}</small>`,
-    () => { driver = d.code; startRace(); }, 'card')));
+    () => { driver = d.code; showMenu('settings'); }, 'card')));
   showMenu('drivers');
 }
 $('teamlist').replaceChildren(...TEAMS.map(t => button(
   `<span class="livery" style="background:${hex(t.color)}"></span><b>${esc(t.name)}</b><small>${t.drivers.map(d => esc(d.name)).join(' · ')}</small><span class="pace" title="Car pace"><i style="width:${Math.round((t.pace - 0.9) / 0.1 * 100)}%"></i></span>`,
   () => showDrivers(t), 'card')));
+function pills(el: string, items: string[], selected: number, pick: (i: number) => void) {
+  $(el).replaceChildren(...items.map((label, i) => {
+    const b = button(label, () => { pick(i); renderSettings(); });
+    b.setAttribute('aria-pressed', String(i === selected));
+    return b;
+  }));
+}
+const LAP_CHOICES = [3, 5, 10, 15];
+function renderSettings() {
+  pills('difflist', DIFFICULTIES.map(d => d.name), difficulty, i => { difficulty = i; });
+  pills('lapslist', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(laps), i => { laps = LAP_CHOICES[i]; });
+}
+$('start-btn').onclick = startRace;
 $('race-btn').onclick = () => showMenu('tracks');
 document.querySelectorAll<HTMLElement>('[data-back]').forEach(b => { b.onclick = () => showMenu(b.dataset.back!); });
 $('again').onclick = startRace;
