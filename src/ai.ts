@@ -28,12 +28,12 @@ export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
   const delta = Math.atan(3.6 * 2 * Math.sin(err) / ld);
   const steer = Math.max(-1, Math.min(1, delta / maxSteerAngle(c.speed)));
 
-  let target = race.profile[r.i] * skill;
+  let target = race.profile[r.i] * skill * Math.sqrt(c.grip); // corner speed ∝ √grip
   // traffic: follow a slower car in our lane, and pull to its other side to pass
   const room = race.track.width / 2 - 2;
   for (const o of race.racers) {
     const gap = o.total - r.total;
-    if (o === r || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
+    if (o === r || o.pitTimer > 0 || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
     if (o.car.speed < c.speed) {
       target = Math.min(target, o.car.speed - 1 + gap * 0.3);
       r.lane = o.lateral > 0 ? -room : room;

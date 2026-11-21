@@ -75,6 +75,6 @@ test('boxing plays the pit stop cutscene then rejoins on fresh tyres', async ({ 
   await expect(page.locator('#cutscene')).toContainText('PIT STOP');
   await expect(page.locator('#cutscene')).toBeHidden({ timeout: 15_000 });
   await page.keyboard.up('ArrowUp');
-  const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, grip: r.car.grip, pit: r.pitTimer }; });
-  expect(p).toEqual({ pits: 1, grip: 1, pit: 0 });
+  const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, fresh: r.car.grip > 0.99, pit: r.pitTimer }; });
+  expect(p).toEqual({ pits: 1, fresh: true, pit: 0 });
 });

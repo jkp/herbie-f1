@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { project, type Track } from './track';
+import { pitBox, pitSide } from './race';
+import { TEAMS } from './grid';
 
 // Track-space helper: point at index i offset `off` metres to the right of the centreline.
 function side(t: Track, i: number, off: number): [number, number] {
@@ -93,6 +95,20 @@ export function buildWorld(t: Track) {
     world.add(g);
   }
 
+  // pit garages: one per team behind its pit box
+  const pitDir = pitSide(t), garageMat = new THREE.MeshLambertMaterial({ color: 0x9ca3af });
+  TEAMS.forEach((team, k) => {
+    const box = pitBox(t, k, pitDir), g = new THREE.Group();
+    const bay = new THREE.Mesh(new THREE.PlaneGeometry(14, 8), new THREE.MeshLambertMaterial({ color: 0x2b2e33 }));
+    bay.rotation.x = -Math.PI / 2; bay.position.y = 0.03;
+    const garage = new THREE.Mesh(new THREE.BoxGeometry(15, 7, 10), garageMat); garage.position.set(0, 3.5, pitDir * 11);
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(14, 1.6, 0.3), new THREE.MeshLambertMaterial({ color: team.color }));
+    sign.position.set(0, 5.6, pitDir * 5.9);
+    g.add(bay, garage, sign);
+    g.position.set(box.x, 0, box.z); g.rotation.y = -box.heading;
+    world.add(g);
+  });
+
   // trees scattered away from the circuit
   const rnd = mulberry32(7);
   const trees: THREE.Matrix4[] = [];
@@ -110,6 +126,18 @@ export function buildWorld(t: Track) {
 
 function mulberry32(a: number) {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+/** Pit crew around a car parked at the origin, nose along +x. */
+export function makeCrew(color: number) {
+  const crew = new THREE.Group(), suit = new THREE.MeshLambertMaterial({ color }), helmet = new THREE.MeshLambertMaterial({ color: 0x111111 });
+  const spots = [[1.85, 1.5], [1.85, -1.5], [-1.75, 1.5], [-1.75, -1.5], [2.3, 1.6], [2.3, -1.6], [-2.2, 1.6], [-2.2, -1.6], [3.6, 0], [-3.4, 0], [0.4, 1.7], [0.4, -1.7]];
+  for (const [x, z] of spots) {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.2, 8), suit); body.position.set(x, 0.6, z);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), helmet); head.position.set(x, 1.4, z);
+    crew.add(body, head);
+  }
+  return crew;
 }
 
 /** Low-poly F1 car, nose along +x. */

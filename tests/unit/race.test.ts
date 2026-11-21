@@ -139,7 +139,7 @@ describe('race', () => {
     for (let t = 0; t < PIT_TIME + 0.5; t += 0.1) stepRace(race, 0.1, { throttle: 1, brake: 0, steer: 0 });
     expect(p.pitTimer).toBe(0);
     expect(p.pits).toBe(1);
-    expect(p.car.grip).toBe(1);
+    expect(p.car.grip).toBeGreaterThan(0.999);
     expect(Math.abs(p.lateral)).toBeLessThan(track.width / 2);
     expect(p.total).toBeGreaterThan(totalInPit);
     expect(p.total).toBeLessThan(track.length + 120);

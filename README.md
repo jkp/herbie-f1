@@ -21,6 +21,7 @@ Open the printed URL: **Quick race** → track → car → driver → settings.
 | C | Chase / cockpit / TV camera |
 | R | Put the car back on the track |
 | M | Mute engine |
+| B | Box: pit at the end of this lap for new tyres |
 
 Gamepads work too (left stick, RT throttle, LT brake). On an iPad or phone, on-screen ◀ ▶ / GAS / BRAKE buttons appear; tap to start.
 

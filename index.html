@@ -31,6 +31,17 @@
     #dash .k { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .1em; }
     #speed { font-size: 46px; font-weight: 900; line-height: .9; font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
     #gear { font-size: 46px; font-weight: 900; line-height: .9; color: #facc15; min-width: 1.2ch; text-align: center; }
+    #tyres { font-size: 26px; font-weight: 700; line-height: 1; }
+    #box { position: absolute; top: -28px; right: 0; padding: 2px 10px; border-radius: 4px; background: #facc15; color: #111; font-weight: 900; font-size: 14px; display: none; }
+    #box.on { display: block; animation: pulse 1s infinite; }
+    #cutscene { position: fixed; inset: 0; pointer-events: auto; }
+    #cutscene::before, #cutscene::after { content: ''; position: fixed; left: 0; right: 0; height: 11vh; background: #000; }
+    #cutscene::before { top: 0; } #cutscene::after { bottom: 0; }
+    #cutscene .cap { position: fixed; left: 0; right: 0; bottom: 13vh; text-align: center; text-shadow: 0 2px 16px rgba(0,0,0,.8); }
+    #cut-title { font-size: clamp(34px, 6vw, 64px); font-weight: 900; letter-spacing: .04em; }
+    #cut-sub { font-size: 20px; color: #e5e7eb; }
+    #cutscene .skip { position: fixed; right: 18px; bottom: calc(11vh + 10px); font-size: 13px; color: var(--dim); }
+    body.cut .panel, body.cut #touch, body.cut #lights { display: none !important; }
     #pos, #lap { font-size: 26px; font-weight: 700; line-height: 1; }
     #rpm { position: absolute; left: 0; right: 0; top: 0; height: 4px; border-radius: 6px 6px 0 0; overflow: hidden; }
     #rpm i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #22c55e, #facc15 70%, #e10600); }
@@ -102,6 +113,7 @@
     #touch [data-act] { top: 16px; width: 86px; height: 44px; font-size: 14px; border-radius: 10px; }
     #touch [data-act=cam] { left: calc(50% - 92px); }
     #touch [data-act=reset] { left: calc(50% + 6px); }
+    #touch [data-act=box] { top: auto; bottom: calc(206px + env(safe-area-inset-bottom)); right: calc(24px + env(safe-area-inset-right)); width: 118px; border-color: #facc15; }
     .hidden { display: none !important; }
     @media (max-width: 700px) { #tower { display: none; } #map { display: none; } }
   </style>
@@ -121,6 +133,7 @@
     <div><div class="k">Lap</div><div id="lap">1/3</div></div>
     <div><div class="k">km/h</div><div id="speed">0</div></div>
     <div><div class="k">Gear</div><div id="gear">N</div></div>
+    <div><div class="k">Tyres</div><div id="tyres">100%</div><div id="box">BOX</div></div>
   </div>
   <canvas id="map" class="panel" width="220" height="220"></canvas>
   <div id="touch">
@@ -130,7 +143,9 @@
     <button data-ctl="gas">GAS</button>
     <button data-act="cam">CAMERA</button>
     <button data-act="reset">RESET</button>
+    <button data-act="box">BOX</button>
   </div>
+  <div id="cutscene" class="hidden"><div class="cap"><div id="cut-title"></div><div id="cut-sub"></div></div><div class="skip">Tap to skip</div></div>
   <div id="lights"><i></i><i></i><i></i><i></i><i></i></div>
   <div id="msg"></div>
 
@@ -148,6 +163,7 @@
         <b>C</b><span>Change camera</span>
         <b>R</b><span>Reset car to track</span>
         <b>M</b><span>Mute engine</span>
+        <b>B</b><span>Box for new tyres</span>
       </div>
     </section>
     <section id="tracks" class="hidden">

@@ -3,6 +3,7 @@ import { buildTrack, pointAt, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
+import { makeCrew } from './scene';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar } from './scene';
 
@@ -115,6 +116,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if (e.code === 'KeyM') audio.toggle();
   if (e.code === 'KeyR' && screen === 'race') resetPlayer();
+  if (e.code === 'KeyB' || e.code === 'KeyP') toggleBox();
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -137,6 +139,7 @@ touchLayer.addEventListener('pointermove', e => { if (e.pointerId in touch || e.
 touchLayer.addEventListener('pointerup', liftFinger);
 touchLayer.addEventListener('pointercancel', liftFinger);
 touchLayer.querySelector('[data-act=cam]')!.addEventListener('pointerdown', () => { camMode = (camMode + 1) % 3; });
+touchLayer.querySelector('[data-act=box]')!.addEventListener('pointerdown', toggleBox);
 touchLayer.querySelector('[data-act=reset]')!.addEventListener('pointerdown', () => { if (screen === 'race') resetPlayer(); });
 
 function readControls(): Controls {
@@ -160,7 +163,15 @@ function readControls(): Controls {
   return ctl;
 }
 
+function toggleBox() {
+  const p = race?.player;
+  if (screen !== 'race' || !p || p.finished || p.pitTimer > 0) return;
+  p.boxRequested = !p.boxRequested;
+  if (p.boxRequested) flash('BOX, BOX');
+}
+
 function resetPlayer() {
+  if (race.player.pitTimer > 0) return;
   const r = race.player, p = pointAt(track, r.s);
   r.car.x = p.x; r.car.z = p.z; r.car.heading = p.heading; r.car.speed = 0; r.car.steer = 0;
   r.lateral = 0;
@@ -225,6 +236,11 @@ function updateHud(dt: number) {
   $('cur').textContent = fmt(race.phase === 'countdown' ? 0.0001 : race.time - p.lapStart);
   $('last').textContent = fmt(p.lastLap);
   $('best').textContent = fmt(p.bestLap);
+  const tyre = Math.round((p.car.grip - 0.74) / 0.26 * 100); // 0.74 is fully worn
+  $('tyres').textContent = `${tyre}%`;
+  $('tyres').style.color = tyre > 60 ? '' : tyre > 30 ? '#facc15' : '#ef4444';
+  $('box').classList.toggle('on', p.boxRequested);
+  touchLayer.querySelector('[data-act=box]')!.classList.toggle('on', p.boxRequested);
   const leader = order[0];
   $('rows').innerHTML = order.map((r, k) => {
     const gap = k === 0 ? 'Leader' : r.finished && leader.finished ? `+${(r.finishTime - leader.finishTime).toFixed(1)}s`
@@ -260,6 +276,48 @@ function showResults() {
   $('results').classList.remove('hidden');
 }
 
+// --- cutscenes: letterboxed camera moves with a caption; tap or Enter skips ---
+interface Cut { t: number; length: number; update: (t: number) => void; end: () => void }
+let cut: Cut | null = null;
+function playCut(c: Omit<Cut, 't'>, title: string, sub = '') {
+  cut = { ...c, t: 0 };
+  $('cut-title').textContent = title; $('cut-sub').textContent = sub;
+  document.body.classList.add('cut'); $('cutscene').classList.remove('hidden');
+}
+function endCut() {
+  if (!cut) return;
+  const c = cut; cut = null;
+  document.body.classList.remove('cut'); $('cutscene').classList.add('hidden');
+  c.end();
+}
+$('cutscene').addEventListener('click', endCut);
+addEventListener('keydown', e => { if (cut && (e.code === 'Enter' || e.code === 'Space')) endCut(); });
+
+function startPitScene() {
+  const p = race.player, mesh = carMeshes[race.racers.indexOf(p)];
+  const crew = makeCrew(p.color); crew.position.copy(mesh.position); crew.rotation.y = mesh.rotation.y; scene.add(crew);
+  const wheels = mesh.userData.wheels as THREE.Mesh[], on = 1.6, off = on + p.stopTime;
+  playCut({
+    length: 6.5,
+    update(t) {
+      // wheels off and back on during the stationary time
+      const k = t < on || t > off ? 0 : Math.min(1, (t - on) * 5, (off - t) * 5);
+      for (const w of wheels) w.position.z = Math.sign(w.parent!.position.z) * k * 0.7;
+      if (t > off) $('cut-sub').textContent = `Fresh tyres · stationary ${p.stopTime.toFixed(1)}s`;
+      const a = mesh.rotation.y + 2.2 + t * 0.25;
+      camera.position.set(mesh.position.x + Math.cos(a) * 7, 2.4, mesh.position.z + Math.sin(a) * 7);
+      camera.lookAt(mesh.position.x, 0.6, mesh.position.z);
+    },
+    end() {
+      for (const w of wheels) w.position.z = 0;
+      scene.remove(crew);
+      // the rest of the 20 s pit loss happens off camera
+      while (race.player.pitTimer > 0) stepRace(race, STEP, { throttle: 0, brake: 0, steer: 0 });
+      flash('PIT EXIT');
+    },
+  }, 'PIT STOP', `${p.team.name} crew · new tyres`);
+}
+
 // --- loop ---
 let acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
@@ -274,7 +332,7 @@ function frame(now: number) {
     return;
   }
 
-  const ctl = screen === 'race' ? readControls() : { throttle: 0, brake: 0, steer: 0 };
+  const ctl = screen === 'race' && !cut ? readControls() : { throttle: 0, brake: 0, steer: 0 };
   acc += dt;
   while (acc >= STEP) { stepRace(race, STEP, ctl); acc -= STEP; }
   if (screen === 'race' && race.phase === 'finished') { screen = 'results'; showResults(); }
@@ -287,7 +345,12 @@ function frame(now: number) {
   });
 
   const c = race.player.car, fx = Math.cos(c.heading), fz = Math.sin(c.heading);
-  if (camMode === 1) {
+  if (race.player.pitTimer > 0 && !cut && screen === 'race') startPitScene();
+  if (cut) {
+    cut.t += dt;
+    cut.update(cut.t);
+    if (cut.t >= cut.length) endCut();
+  } else if (camMode === 1) {
     camera.position.set(c.x - fx * 0.3, 1.25, c.z - fz * 0.3);
     camera.lookAt(c.x + fx * 30, 0.4, c.z + fz * 30);
   } else if (camMode === 2) {

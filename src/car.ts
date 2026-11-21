@@ -1,7 +1,8 @@
 // Arcade-sim car: point mass moving along its heading, grip-limited yaw, downforce grows with speed.
 export type Surface = 'track' | 'grass';
 export interface Controls { throttle: number; brake: number; steer: number } // steer: -1 left .. +1 right
-export interface CarState { x: number; z: number; heading: number; speed: number; steer: number; power: number } // power: engine multiplier, 1 = best car
+// power: engine multiplier (1 = best car); grip: tyre condition multiplier (1 = fresh)
+export interface CarState { x: number; z: number; heading: number; speed: number; steer: number; power: number; grip: number }
 
 const WHEELBASE = 3.6;
 const POWER = 940;        // W per kg: ~750 kW / 800 kg
@@ -9,7 +10,7 @@ const TRACTION = 12;      // m/s² launch limit
 const DRAG = 0.0012;      // per m of v²; gives ~330 km/h top speed
 const STEER_RATE = 5;     // steering travel per second
 
-export const newCar = (x: number, z: number, heading: number, power = 1): CarState => ({ x, z, heading, speed: 0, steer: 0, power });
+export const newCar = (x: number, z: number, heading: number, power = 1): CarState => ({ x, z, heading, speed: 0, steer: 0, power, grip: 1 });
 
 /** Max lateral acceleration (m/s²); downforce adds grip with v². */
 export const GRIP_BASE = 18, GRIP_AERO = 0.007;
@@ -27,13 +28,13 @@ export function stepCar(c: CarState, ctl: Controls, dt: number, surface: Surface
   if (surface === 'grass') a -= Math.sign(v) * (3 + 0.01 * v * v);
   if (ctl.throttle > 0 && v >= 0) a += ctl.throttle * Math.min(TRACTION, POWER * c.power / Math.max(av, 1)) * (surface === 'grass' ? 0.5 : 1);
   if (ctl.brake > 0) {
-    if (v > 0.5) a -= ctl.brake * brakeDecel(av, surface);
+    if (v > 0.5) a -= ctl.brake * brakeDecel(av, surface) * c.grip;
     else if (ctl.throttle === 0) a -= 4 * ctl.brake; // reverse gear
   }
 
   // Yaw: kinematic bicycle, capped by lateral grip; asking for more scrubs speed (understeer).
   const kin = v * Math.tan(c.steer * maxSteerAngle(v)) / WHEELBASE;
-  const cap = av > 0.1 ? lateralGrip(av, surface) / av : Infinity;
+  const cap = av > 0.1 ? lateralGrip(av, surface) * c.grip / av : Infinity;
   const yaw = Math.max(-cap, Math.min(cap, kin));
   if (Math.abs(kin) > cap) a -= Math.sign(v) * Math.min(8, (Math.abs(kin) / cap - 1) * 6);
 
