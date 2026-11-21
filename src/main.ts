@@ -580,7 +580,7 @@ let people: People | null = null;
 People.load().then(p => { people = p; if (race && !driverRig) seatDriver(); }).catch(e => console.warn('people models unavailable', e));
 
 /** The player's driver: seated in the car, hands on a working steering wheel. */
-let driverRig: { person: Person; wheel: THREE.Group; spin: THREE.Group; grips: THREE.Object3D[]; display: { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; t: number }; leds: THREE.Mesh[] } | null = null;
+let driverRig: { person: Person; wheel: THREE.Group; spin: THREE.Group; hands: { side: 'l' | 'r'; bone: THREE.Bone; wrist: THREE.Vector3; rot: THREE.Quaternion }[]; display: { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; t: number }; leds: THREE.Mesh[] } | null = null;
 function seatDriver() {
   driverRig = null;
   if (!people || !race) return;
@@ -596,11 +596,13 @@ function seatDriver() {
   car.updateMatrixWorld(true);
   seat.position.add(new THREE.Vector3(0.3, 0.84, 0).sub(local(person.bone('Head'))));
   car.updateMatrixWorld(true);
-  const hl = local(person.bone('hand_l')), hr = local(person.bone('hand_r'));
+  // palms (between wrist and knuckles) are where the grips go
+  const palm = (side: string) => local(person.bone(`hand_${side}`)).add(local(person.bone(`middle_01_${side}`))).multiplyScalar(0.5);
+  const pl = palm('l'), pr = palm('r');
   // steering wheel where the hands are: F1-style rectangle with grips, screen and rev lights
   const wheel = new THREE.Group(), spin = new THREE.Group();
-  wheel.position.copy(hl).add(hr).multiplyScalar(0.5); wheel.position.x += 0.04; wheel.rotation.z = 0.35;
-  const half = Math.max(0.12, Math.abs(hl.z - hr.z) / 2);
+  wheel.position.copy(pl).add(pr).multiplyScalar(0.5); wheel.rotation.z = 0.35;
+  const half = Math.max(0.1, Math.abs(pl.z - pr.z) / 2);
   const carbon = new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.45, metalness: 0.3 });
   const rubber = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
   const plate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, half * 2 - 0.02), carbon);
@@ -614,16 +616,30 @@ function seatDriver() {
     l.position.set(-0.016, 0.055, (k - 5.5) * 0.011); return l;
   });
   spin.add(plate, ...grips, screen, ...leds); wheel.add(spin); car.add(wheel);
-  driverRig = { person, wheel, spin, grips: hl.z < hr.z ? grips : [...grips].reverse(), display: { ctx: c.getContext('2d')!, tex, t: 0 }, leds };
+  car.updateMatrixWorld(true);
+  // lock each hand to the wheel as it is now (wheel straight): wrist position and hand orientation in the wheel's frame
+  const spinQ = spin.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const hands = (['l', 'r'] as const).map(side => {
+    const bone = person.bone(`hand_${side}`), wrist = spin.worldToLocal(bone.getWorldPosition(new THREE.Vector3()));
+    const grip = grips[(side === 'l') === (pl.z < pr.z) ? 0 : 1];
+    grip.position.copy(spin.worldToLocal(car.localToWorld((side === 'l' ? pl : pr).clone())));
+    return { side, bone, wrist, rot: spinQ.clone().multiply(bone.getWorldQuaternion(new THREE.Quaternion())) };
+  });
+  driverRig = { person, wheel, spin, hands, display: { ctx: c.getContext('2d')!, tex, t: 0 }, leds };
 }
 function updateDriver(dt: number) {
   if (!driverRig) return;
-  const c = race.player.car, { person, spin, grips, display, leds } = driverRig;
+  const c = race.player.car, { person, spin, hands, display, leds } = driverRig;
   person.update(dt);
-  spin.rotation.x = -c.steer * 1.2; // wheel turns about 70° each way at full lock
+  spin.rotation.x = c.steer * 0.8; // turns the same way as the car; ~45° at full lock keeps the arms out of the driver's view
   spin.updateWorldMatrix(true, true);
-  for (const [k, side] of (['l', 'r'] as const).entries())
-    reachWith(person.bone(`upperarm_${side}`), person.bone(`lowerarm_${side}`), person.bone(`hand_${side}`), grips[k].getWorldPosition(new THREE.Vector3()));
+  const spinQ = spin.getWorldQuaternion(new THREE.Quaternion()), pq = new THREE.Quaternion();
+  for (const h of hands) {
+    // arms reach the wrist's spot on the wheel, then the hand turns with the wheel so it stays wrapped round the grip
+    reachWith(person.bone(`upperarm_${h.side}`), person.bone(`lowerarm_${h.side}`), h.bone, spin.localToWorld(h.wrist.clone()));
+    h.bone.parent!.getWorldQuaternion(pq);
+    h.bone.quaternion.copy(pq.invert().multiply(spinQ.clone().multiply(h.rot)));
+  }
   const { gear, rpm } = gearFor(c.speed), lit = Math.round((rpm - 4000) / 8500 * leds.length);
   leds.forEach((l, k) => (l.material as THREE.MeshBasicMaterial).color.setHex(k >= lit ? 0x222222 : k < 4 ? 0x22c55e : k < 8 ? 0xef4444 : 0x60a5fa));
   if ((display.t -= dt) <= 0) {
