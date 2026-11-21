@@ -3,7 +3,7 @@
 export interface TrackDef {
   id: string; name: string; gp: string; country: string;
   width: number; runoff: number; officialLength: number;
-  points: number[][]; // closed loop of [x, z] metres, clockwise, starting on the start/finish line
+  points: number[][]; // closed loop of [x, z] metres in race direction, starting on the start/finish line
 }
 
 export interface Track {

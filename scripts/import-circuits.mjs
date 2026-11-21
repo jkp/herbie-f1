@@ -1,5 +1,5 @@
 // Regenerates src/circuits.ts from bacinger/f1-circuits (MIT). Run: node scripts/import-circuits.mjs
-// Add a circuit by adding a row here. `start`: metres along the (clockwise) data where the real start/finish line is,
+// Add a circuit by adding a row here. `start`: metres along the (race-direction) data where the real start/finish line is,
 // for datasets that don't begin on it. Check with the corner list: the first corner should come up at the right distance.
 import { writeFileSync } from 'node:fs';
 
@@ -9,6 +9,12 @@ const CIRCUITS = [
   { id: 'monza', file: 'it-1922', name: 'Monza', gp: 'Italian Grand Prix', country: 'Italy', width: 14, runoff: 18, start: 0 },
   { id: 'monaco', file: 'mc-1929', name: 'Monaco', gp: 'Monaco Grand Prix', country: 'Monaco', width: 10, runoff: 3, start: 2300 },
   { id: 'redbullring', file: 'at-1969', name: 'Red Bull Ring', gp: 'Austrian Grand Prix', country: 'Austria', width: 14, runoff: 18, start: 0 },
+  { id: 'bahrain', file: 'bh-2002', name: 'Bahrain', gp: 'Bahrain Grand Prix', country: 'Bahrain', width: 15, runoff: 20, start: 0 },
+  { id: 'barcelona', file: 'es-1991', name: 'Barcelona', gp: 'Spanish Grand Prix', country: 'Spain', width: 14, runoff: 18, start: 0 },
+  { id: 'hungaroring', file: 'hu-1986', name: 'Hungaroring', gp: 'Hungarian Grand Prix', country: 'Hungary', width: 13, runoff: 16, start: 0 },
+  { id: 'zandvoort', file: 'nl-1948', name: 'Zandvoort', gp: 'Dutch Grand Prix', country: 'Netherlands', width: 12, runoff: 12, start: 0 },
+  { id: 'interlagos', file: 'br-1940', name: 'Interlagos', gp: 'São Paulo Grand Prix', country: 'Brazil', width: 13, runoff: 15, start: 0, ccw: true },
+  { id: 'yasmarina', file: 'ae-2009', name: 'Yas Marina', gp: 'Abu Dhabi Grand Prix', country: 'United Arab Emirates', width: 15, runoff: 18, start: 0, ccw: true },
 ];
 
 const out = [];
@@ -23,7 +29,7 @@ for (const c of CIRCUITS) {
   let pts = ll.map(([lon, lat]) => [Math.round((lon - lon0) * k * 10) / 10, Math.round(-(lat - lat0) * 110540 * 10) / 10]);
   let area = 0;
   for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; area += a[0] * b[1] - b[0] * a[1]; }
-  if (area < 0) pts = [pts[0], ...pts.slice(1).reverse()]; // every circuit here races clockwise
+  if ((area < 0) !== !!c.ccw) pts = [pts[0], ...pts.slice(1).reverse()]; // race direction: clockwise unless `ccw`
   let along = 0, k0 = 0;
   while (k0 < pts.length - 1 && along < c.start) { along += Math.hypot(pts[k0 + 1][0] - pts[k0][0], pts[k0 + 1][1] - pts[k0][1]); k0++; }
   // rotate to the start line and re-centre so the line sits at the origin

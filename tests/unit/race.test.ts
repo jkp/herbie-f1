@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildTrack, pointAt } from '../../src/track';
 import { CIRCUITS } from '../../src/circuits';
-import { createRace, stepRace, standings } from '../../src/race';
+import { createRace, stepRace, standings, DIFFICULTIES } from '../../src/race';
 import { DRIVERS } from '../../src/grid';
 
 const track = buildTrack(CIRCUITS[0]);
@@ -37,6 +37,12 @@ describe('race', () => {
     const rb = createRace(track, { laps: 3, countdown: 0, player: 'VER' }).player;
     const wil = createRace(track, { laps: 3, countdown: 0, player: 'ALB' }).player;
     expect(rb.car.power).toBeGreaterThan(wil.car.power);
+  });
+
+  it('has six difficulties from Beginner to Legendary, each with quicker AI than the last', () => {
+    expect(DIFFICULTIES.map(d => d.name)).toEqual(['Beginner', 'Amateur', 'Semi-Pro', 'Pro', 'World Class', 'Legendary']);
+    const verSkill = (difficulty: number) => createRace(track, { laps: 3, countdown: 0, player: 'LAT', difficulty }).racers.find(r => r.code === 'VER')!.skill;
+    for (let d = 1; d < DIFFICULTIES.length; d++) expect(verSkill(d)).toBeGreaterThan(verSkill(d - 1));
   });
 
   it('can run a smaller field', () => {
