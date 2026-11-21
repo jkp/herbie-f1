@@ -16,9 +16,9 @@
       font-family: 'Titillium Web', system-ui, sans-serif; }
     canvas#gl { display: block; }
     .panel { position: fixed; background: var(--panel); border-radius: 6px; backdrop-filter: blur(6px); }
-    #tower { top: 16px; left: 16px; width: 220px; padding: 6px 0; font-size: 14px; }
+    #tower { top: 16px; left: 16px; width: 170px; padding: 6px 0; font-size: 13px; max-height: calc(100vh - 32px); overflow: hidden; }
     #tower .head { padding: 2px 12px 6px; font-weight: 900; letter-spacing: .08em; border-bottom: 2px solid var(--red); }
-    #tower .row { display: grid; grid-template-columns: 24px 6px 1fr auto; gap: 8px; align-items: center; padding: 2px 12px; }
+    #tower .row { display: grid; grid-template-columns: 22px 4px 1fr auto; gap: 8px; align-items: center; padding: 1px 12px; line-height: 1.45; }
     #tower .row.me { background: rgba(250, 204, 21, .18); }
     #tower .stripe { width: 4px; height: 14px; border-radius: 2px; }
     #tower .gap { color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -43,6 +43,34 @@
     .overlay h1 { font-size: clamp(40px, 8vw, 88px); margin: 0; font-weight: 900; letter-spacing: -.01em; line-height: 1; }
     .overlay h1 span { color: var(--red); }
     .overlay h2 { margin: 6px 0 24px; font-weight: 400; color: var(--dim); }
+    .overlay section { display: flex; flex-direction: column; align-items: center; width: 100%; max-height: 100%; }
+    .overlay h2.step { color: var(--text); font-weight: 700; font-size: 28px; margin: 0 0 18px; }
+    .stack { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 28px; }
+    .stack.row { flex-direction: row; margin: 22px 0 0; }
+    .overlay button { font: inherit; color: var(--text); cursor: pointer; touch-action: manipulation; }
+    .overlay button:focus-visible { outline: 3px solid #facc15; outline-offset: 3px; }
+    .primary, .secondary { min-width: 220px; padding: 14px 28px; border-radius: 8px; font-size: 22px !important; font-weight: 700 !important;
+      letter-spacing: .08em; text-transform: uppercase; border: 0; }
+    .primary { background: var(--red); }
+    .primary:hover { background: #ff1a14; }
+    .secondary { background: rgba(255,255,255,.12); }
+    .back { margin-top: 18px; background: none; border: 1px solid rgba(255,255,255,.3); border-radius: 8px; padding: 8px 22px; color: var(--dim) !important; }
+    .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; width: min(1040px, 100%); overflow-y: auto; padding: 4px; }
+    .card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 14px 16px; min-height: 64px;
+      background: var(--panel); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; }
+    .card:hover { border-color: rgba(255,255,255,.5); }
+    .card b { font-size: 18px; }
+    .card small { color: var(--dim); font-size: 13px; line-height: 1.3; }
+    .card svg { width: 100%; height: 110px; margin-bottom: 6px; }
+    .card svg polygon { fill: none; stroke: var(--text); stroke-width: 2.5; stroke-linejoin: round; }
+    .card svg circle { fill: var(--red); }
+    .card .livery { width: 100%; height: 8px; border-radius: 4px; margin-bottom: 6px; }
+    .card .pace { width: 100%; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; margin-top: 6px; }
+    .card .pace i { display: block; height: 100%; background: #facc15; border-radius: 2px; }
+    .card .num { font-size: 54px; font-weight: 900; line-height: 1; }
+    #driverlist { grid-template-columns: repeat(2, minmax(0, 240px)); justify-content: center; }
+    .tablewrap { max-height: 60vh; overflow-y: auto; }
+    #results td.team { color: var(--dim); font-size: 15px; }
     .overlay .go { margin-top: 26px; font-size: 22px; font-weight: 700; animation: pulse 1.4s infinite; }
     .keys { display: grid; grid-template-columns: auto auto; gap: 4px 18px; text-align: left; color: var(--dim); font-size: 15px; }
     .keys b { color: var(--text); }
@@ -102,24 +130,46 @@
   <div id="msg"></div>
 
   <div id="menu" class="overlay">
-    <h1>HERBIE <span>F1</span></h1>
-    <h2 id="title">British Grand Prix · Silverstone</h2>
-    <div class="keys">
-      <b>↑ / W</b><span>Throttle</span>
-      <b>↓ / S</b><span>Brake / reverse</span>
-      <b>← → / A D</b><span>Steer</span>
-      <b>C</b><span>Change camera</span>
-      <b>R</b><span>Reset car to track</span>
-      <b>M</b><span>Mute engine</span>
-    </div>
-    <div class="go">Press ENTER or tap to start</div>
+    <section id="home">
+      <h1>HERBIE <span>F1</span></h1>
+      <h2>Main menu</h2>
+      <div class="stack">
+        <button id="race-btn" class="primary">Race</button>
+      </div>
+      <div class="keys">
+        <b>↑ / W</b><span>Throttle</span>
+        <b>↓ / S</b><span>Brake / reverse</span>
+        <b>← → / A D</b><span>Steer</span>
+        <b>C</b><span>Change camera</span>
+        <b>R</b><span>Reset car to track</span>
+        <b>M</b><span>Mute engine</span>
+      </div>
+    </section>
+    <section id="tracks" class="hidden">
+      <h2 class="step">Choose your track</h2>
+      <div id="tracklist" class="choices"></div>
+      <button class="back" data-back="home">Back</button>
+    </section>
+    <section id="teams" class="hidden">
+      <h2 class="step">Choose your car</h2>
+      <div id="teamlist" class="choices"></div>
+      <button class="back" data-back="tracks">Back</button>
+    </section>
+    <section id="drivers" class="hidden">
+      <h2 class="step">Choose your driver</h2>
+      <div id="driverlist" class="choices"></div>
+      <button class="back" data-back="teams">Back</button>
+    </section>
   </div>
 
   <div id="results" class="overlay hidden">
     <h1>CHEQUERED <span>FLAG</span></h1>
     <h2 id="verdict"></h2>
-    <table><tbody id="resrows"></tbody></table>
-    <div class="go">Press ENTER or tap to race again</div>
+    <div class="tablewrap"><table><tbody id="resrows"></tbody></table></div>
+    <div class="stack row">
+      <button id="again" class="primary">Race again</button>
+      <button id="home-btn" class="secondary">Main menu</button>
+    </div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>

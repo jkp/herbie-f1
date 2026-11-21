@@ -41,8 +41,8 @@ function wall(t: Track, off: number, height: number, colorAt: (i: number) => THR
   return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
 }
 
-export function buildWorld(t: Track, runoff: number) {
-  const world = new THREE.Group(), w = t.width / 2;
+export function buildWorld(t: Track) {
+  const world = new THREE.Group(), w = t.width / 2, runoff = t.runoff;
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (let i = 0; i < t.n; i++) {
     minX = Math.min(minX, t.xs[i]); maxX = Math.max(maxX, t.xs[i]); minZ = Math.min(minZ, t.zs[i]); maxZ = Math.max(maxZ, t.zs[i]);
@@ -82,6 +82,7 @@ export function buildWorld(t: Track, runoff: number) {
   const crowd = new THREE.MeshLambertMaterial({ color: 0x9b3d3d });
   for (const s of [60, 160, 1250, 2300, 3700, 5300]) {
     const i = Math.round(s / (t.length / t.n)) % t.n, [x, z] = side(t, i, -(w + runoff + 14));
+    if (Math.abs(project(t, x, z).lateral) < w + runoff + 12) continue; // would sit on another part of the circuit
     const a = (i - 1 + t.n) % t.n, b = (i + 1) % t.n, h = Math.atan2(t.zs[b] - t.zs[a], t.xs[b] - t.xs[a]);
     const g = new THREE.Group();
     const base = new THREE.Mesh(new THREE.BoxGeometry(80, 10, 16), standMat); base.position.y = 5;

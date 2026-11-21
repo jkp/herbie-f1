@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { buildTrack, pointAt } from './track';
-import { SILVERSTONE } from './silverstone';
+import { buildTrack, pointAt, type Track, type TrackDef } from './track';
+import { CIRCUITS } from './circuits';
+import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, type Race } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar } from './scene';
@@ -8,13 +9,13 @@ import { buildWorld, makeCar } from './scene';
 const params = new URLSearchParams(location.search);
 const OPTS = {
   laps: Number(params.get('laps') ?? 3),
-  opponents: Number(params.get('opponents') ?? 5),
+  size: params.has('size') ? Number(params.get('size')) : undefined,
   countdown: Number(params.get('countdown') ?? 4),
 };
 const STEP = 1 / 120;
 const $ = (id: string) => document.getElementById(id)!;
 
-const track = buildTrack(SILVERSTONE);
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 
 // --- three.js setup ---
 const renderer = new THREE.WebGLRenderer({ canvas: $('gl') as HTMLCanvasElement, antialias: true });
@@ -30,31 +31,74 @@ addEventListener('resize', resize); resize();
 
 let race!: Race;
 let carMeshes: THREE.Group[] = [];
-const world = buildWorld(track, 20);
-scene.add(world);
+let def: TrackDef, track!: Track, world: THREE.Group | null = null;
+let driver = 'VER';
+
+function loadTrack(d: TrackDef) {
+  if (def === d) return;
+  def = d; track = buildTrack(d);
+  if (world) { scene.remove(world); world.traverse(o => (o as THREE.Mesh).geometry?.dispose()); }
+  world = buildWorld(track); scene.add(world);
+  mapPath = makeMapPath(track);
+}
 
 let screen: 'menu' | 'race' | 'results' = 'menu';
 let camMode = 0; // 0 chase, 1 cockpit, 2 TV
+function clearCars() { carMeshes.forEach(m => scene.remove(m)); carMeshes = []; }
 function newRace() {
-  carMeshes.forEach(m => scene.remove(m));
-  race = createRace(track, OPTS);
+  clearCars();
+  race = createRace(track, { ...OPTS, player: driver });
   carMeshes = race.racers.map(r => { const m = makeCar(r.color); scene.add(m); return m; });
   lastPos = race.racers.length;
+  camPos.set(0, 0, 0);
 }
 
-// --- input ---
-const keys = new Set<string>();
+// --- menus: home → track → car → driver → race ---
+const MENU_SCREENS = ['home', 'tracks', 'teams', 'drivers'];
+function showMenu(id: string) {
+  screen = 'menu';
+  document.body.classList.add('menu');
+  $('results').classList.add('hidden'); $('menu').classList.remove('hidden');
+  for (const m of MENU_SCREENS) $(m).classList.toggle('hidden', m !== id);
+  $(id).querySelector<HTMLElement>('.choices button, .primary')?.focus();
+}
 function startRace() {
-  if (screen === 'race') return;
   newRace(); screen = 'race';
   document.body.classList.remove('menu'); $('menu').classList.add('hidden'); $('results').classList.add('hidden');
   audio.start();
 }
-$('menu').addEventListener('click', startRace);
-$('results').addEventListener('click', startRace);
+const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+const esc = (t: string) => t.replace(/[&<>"]/g, ch => `&#${ch.charCodeAt(0)};`);
+function button(html: string, onClick: () => void, cls = '') {
+  const b = document.createElement('button'); b.className = cls; b.innerHTML = html; b.onclick = onClick; return b;
+}
+function outline(d: TrackDef) {
+  const xs = d.points.map(p => p[0]), zs = d.points.map(p => p[1]);
+  const minX = Math.min(...xs), minZ = Math.min(...zs), sc = 84 / Math.max(Math.max(...xs) - minX, Math.max(...zs) - minZ);
+  const pts = d.points.map(([x, z]) => `${((x - minX) * sc + 8).toFixed(1)},${((z - minZ) * sc + 8).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 100 100" aria-hidden="true"><polygon points="${pts}" /><circle cx="${((d.points[0][0] - minX) * sc + 8).toFixed(1)}" cy="${((d.points[0][1] - minZ) * sc + 8).toFixed(1)}" r="4" /></svg>`;
+}
+$('tracklist').replaceChildren(...CIRCUITS.map(d => button(
+  `${outline(d)}<b>${esc(d.name)}</b><small>${esc(d.gp)} · ${(d.officialLength / 1000).toFixed(3)} km</small>`,
+  () => { loadTrack(d); showMenu('teams'); }, 'card')));
+function showDrivers(t: Team) {
+  $('driverlist').replaceChildren(...t.drivers.map(d => button(
+    `<span class="num" style="color:${hex(t.color)}">${d.number}</span><b>${esc(d.name)}</b><small>${esc(t.name)}</small>`,
+    () => { driver = d.code; startRace(); }, 'card')));
+  showMenu('drivers');
+}
+$('teamlist').replaceChildren(...TEAMS.map(t => button(
+  `<span class="livery" style="background:${hex(t.color)}"></span><b>${esc(t.name)}</b><small>${t.drivers.map(d => esc(d.name)).join(' · ')}</small><span class="pace" title="Car pace"><i style="width:${Math.round((t.pace - 0.9) / 0.1 * 100)}%"></i></span>`,
+  () => showDrivers(t), 'card')));
+$('race-btn').onclick = () => showMenu('tracks');
+document.querySelectorAll<HTMLElement>('[data-back]').forEach(b => { b.onclick = () => showMenu(b.dataset.back!); });
+$('again').onclick = startRace;
+$('home-btn').onclick = () => { clearCars(); showMenu('home'); };
+
+// --- input ---
+const keys = new Set<string>();
 addEventListener('keydown', e => {
   keys.add(e.code);
-  if (e.code === 'Enter') startRace();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if (e.code === 'KeyM') audio.toggle();
   if (e.code === 'KeyR' && screen === 'race') resetPlayer();
@@ -142,7 +186,8 @@ const fmt = (t: number) => {
   return `${m}:${s.toFixed(3).padStart(6, '0')}`;
 };
 const mapCanvas = $('map') as HTMLCanvasElement, map = mapCanvas.getContext('2d')!;
-const mapPath = (() => {
+let mapPath: ReturnType<typeof makeMapPath>;
+function makeMapPath(track: Track) {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (let i = 0; i < track.n; i++) { minX = Math.min(minX, track.xs[i]); maxX = Math.max(maxX, track.xs[i]); minZ = Math.min(minZ, track.zs[i]); maxZ = Math.max(maxZ, track.zs[i]); }
   const sc = 190 / Math.max(maxX - minX, maxZ - minZ), ox = 110 - (minX + maxX) / 2 * sc, oz = 110 - (minZ + maxZ) / 2 * sc;
@@ -150,8 +195,8 @@ const mapPath = (() => {
   for (let i = 0; i < track.n; i += 4) path.lineTo(track.xs[i] * sc + ox, track.zs[i] * sc + oz);
   path.closePath();
   return { path, tx: (x: number) => x * sc + ox, tz: (z: number) => z * sc + oz };
-})();
-let lastPos = 6, msgTimer = 0;
+}
+let lastPos = 20, msgTimer = 0;
 function flash(text: string) { $('msg').textContent = text; $('msg').style.opacity = '1'; msgTimer = 2; }
 
 function updateHud(dt: number) {
@@ -171,7 +216,7 @@ function updateHud(dt: number) {
   $('rows').innerHTML = order.map((r, k) => {
     const gap = k === 0 ? 'Leader' : r.finished && leader.finished ? `+${(r.finishTime - leader.finishTime).toFixed(1)}s`
       : `+${((leader.total - r.total) / Math.max(30, Math.abs(r.car.speed))).toFixed(1)}s`;
-    return `<div class="row${r.isPlayer ? ' me' : ''}"><b>${k + 1}</b><span class="stripe" style="background:#${r.color.toString(16).padStart(6, '0')}"></span><span>${r.name}</span><span class="gap">${gap}</span></div>`;
+    return `<div class="row${r.isPlayer ? ' me' : ''}"><b>${k + 1}</b><span class="stripe" style="background:#${r.color.toString(16).padStart(6, '0')}"></span><span>${r.code}</span><span class="gap">${gap}</span></div>`;
   }).join('');
 
   // start lights: one per second, all out on go
@@ -195,15 +240,14 @@ function updateHud(dt: number) {
 
 function showResults() {
   const order = standings(race), pos = order.indexOf(race.player) + 1, winner = order[0];
-  $('verdict').textContent = pos === 1 ? 'You won the British Grand Prix!' : `You finished P${pos}`;
-  $('resrows').innerHTML = order.map((r, k) => `<tr class="${r.isPlayer ? 'me' : ''}"><td>${k + 1}</td><td>${r.name}</td><td>${
+  $('verdict').textContent = pos === 1 ? `You won the ${def.gp}!` : `You finished P${pos}`;
+  $('resrows').innerHTML = order.map((r, k) => `<tr class="${r.isPlayer ? 'me' : ''}"><td>${k + 1}</td><td>${esc(r.name)}</td><td class="team">${esc(r.team.name)}</td><td>${
     r === winner ? fmt(r.finishTime) : r.finished ? `+${(r.finishTime - winner.finishTime).toFixed(3)}s` : `${r.completed}/${race.laps} laps`
   }</td><td>Best ${fmt(r.bestLap)}</td></tr>`).join('');
   $('results').classList.remove('hidden');
 }
 
 // --- loop ---
-const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 let acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
   const dt = Math.min(0.1, (now - prev) / 1000); prev = now;
@@ -250,6 +294,8 @@ function frame(now: number) {
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
+loadTrack(CIRCUITS[0]);
+showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging

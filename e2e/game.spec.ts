@@ -31,3 +31,25 @@ test('back buttons step back through the menus', async ({ page }) => {
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByRole('heading', { name: 'Main menu' })).toBeVisible();
 });
+
+test('results screen offers race again and main menu', async ({ page }) => {
+  await page.goto('/?countdown=0&laps=1');
+  await pickRace(page, { track: 'Monza', team: 'Williams', driver: 'Alexander Albon' });
+  // jump the player to just short of the line on the final lap
+  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * r.laps - 0.001; });
+  await page.keyboard.down('ArrowUp');
+  await expect(page.getByRole('heading', { name: 'CHEQUERED FLAG' })).toBeVisible();
+  await page.keyboard.up('ArrowUp');
+  await expect(page.locator('#verdict')).toContainText(/Italian Grand Prix|You finished P/);
+  await expect(page.locator('#resrows tr')).toHaveCount(20);
+
+  await page.getByRole('button', { name: 'Race again' }).click();
+  await expect(page.locator('#results')).toBeHidden();
+  expect(await page.evaluate(() => (window as any).__game.race.player.completed)).toBe(0);
+
+  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * r.laps - 0.001; });
+  await page.keyboard.down('ArrowUp');
+  await page.getByRole('button', { name: 'Main menu' }).click();
+  await page.keyboard.up('ArrowUp');
+  await expect(page.getByRole('heading', { name: 'Main menu' })).toBeVisible();
+});
