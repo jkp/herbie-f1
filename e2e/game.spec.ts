@@ -63,3 +63,18 @@ test('results screen offers race again and main menu', async ({ page }) => {
   await page.keyboard.up('ArrowUp');
   await expect(page.getByRole('heading', { name: 'Main menu' })).toBeVisible();
 });
+
+test('boxing plays the pit stop cutscene then rejoins on fresh tyres', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Silverstone', team: 'Ferrari', driver: 'Carlos Sainz', laps: 5 });
+  await page.keyboard.press('KeyB');
+  await expect(page.locator('#box')).toHaveClass(/on/);
+  // put the player just short of the line so the next crossing ends the lap
+  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length - 0.001; });
+  await page.keyboard.down('ArrowUp');
+  await expect(page.locator('#cutscene')).toContainText('PIT STOP');
+  await expect(page.locator('#cutscene')).toBeHidden({ timeout: 15_000 });
+  await page.keyboard.up('ArrowUp');
+  const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, grip: r.car.grip, pit: r.pitTimer }; });
+  expect(p).toEqual({ pits: 1, grip: 1, pit: 0 });
+});

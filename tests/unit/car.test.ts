@@ -49,6 +49,16 @@ describe('car physics', () => {
     expect(maxLat).toBeLessThanOrEqual(lateralGrip(60, 'track') * 1.05);
   });
 
+  it('corners slower on worn tyres', () => {
+    const turn = (grip: number) => {
+      const car = newCar(0, 0, 0); car.speed = 60; car.grip = grip;
+      for (let i = 0; i < 120; i++) stepCar(car, { throttle: 1, brake: 0, steer: 1 }, 1 / 120, 'track');
+      return car.heading;
+    };
+    expect(newCar(0, 0, 0).grip).toBe(1);
+    expect(turn(0.8)).toBeLessThan(turn(1) * 0.9);
+  });
+
   it('can reverse slowly when braking at a standstill', () => {
     const car = run(3, { throttle: 0, brake: 1, steer: 0 });
     expect(car.speed).toBeLessThan(0);

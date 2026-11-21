@@ -24,3 +24,15 @@ describe.each(CIRCUITS)('full race at $name', def => {
     expect(offTrack / samples).toBeLessThan(0.03);
   }, 60_000);
 });
+
+describe('strategy', () => {
+  it('every AI makes exactly one pit stop in a 6-lap race and still finishes', () => {
+    const track = buildTrack(CIRCUITS.find(c => c.id === 'redbullring')!);
+    const race = createRace(track, { laps: 6, countdown: 0, player: 'VER' });
+    while (race.racers.some(r => !r.finished) && race.time < 900) stepRace(race, 1 / 120, aiControls(race.player, race));
+    for (const r of race.racers.filter(r => !r.isPlayer)) {
+      expect(r.finished, r.code).toBe(true);
+      expect(r.pits, r.code).toBe(1);
+    }
+  }, 60_000);
+});

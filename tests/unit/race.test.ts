@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildTrack, pointAt } from '../../src/track';
 import { CIRCUITS } from '../../src/circuits';
-import { createRace, stepRace, standings, DIFFICULTIES } from '../../src/race';
+import { createRace, stepRace, standings, DIFFICULTIES, PIT_TIME, tyreGrip } from '../../src/race';
 import { DRIVERS } from '../../src/grid';
 
 const track = buildTrack(CIRCUITS[0]);
@@ -107,6 +107,43 @@ describe('race', () => {
     stepRace(race, 1 / 120, idle);
     expect(p.car.speed).toBeGreaterThan(30);
     expect(Math.abs(p.car.heading - pt.heading)).toBeLessThan(0.05);
+  });
+
+  it('wears tyres over the race, faster in short races', () => {
+    expect(tyreGrip(0, 15)).toBe(1);
+    expect(tyreGrip(4, 15)).toBeLessThan(1);
+    expect(tyreGrip(10, 15)).toBeLessThan(tyreGrip(4, 15));
+    expect(tyreGrip(2, 3)).toBeGreaterThan(0.9); // a 3-lap sprint never needs a stop
+    expect(tyreGrip(100, 15)).toBeGreaterThan(0.7); // worn, not undriveable
+  });
+
+  it('boxes the player at the end of the lap: in the pits for PIT_TIME, then back out on fresh tyres', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player;
+    const drive = (from: number, to: number) => {
+      for (let s = from; s <= to; s += 5) {
+        const pt = pointAt(track, s);
+        p.car.x = pt.x; p.car.z = pt.z; p.car.heading = pt.heading;
+        stepRace(race, 0.1, idle);
+      }
+    };
+    drive(-20, track.length - 50);
+    expect(p.car.grip).toBeLessThan(1);
+    p.boxRequested = true;
+    drive(track.length - 45, track.length + 2);
+    expect(p.completed).toBe(1);
+    expect(p.pitTimer).toBeGreaterThan(0);
+    expect(p.boxRequested).toBe(false);
+    expect(Math.abs(p.lateral)).toBeGreaterThan(track.width / 2 + track.runoff); // parked in the garage
+    const totalInPit = p.total;
+    for (let t = 0; t < PIT_TIME + 0.5; t += 0.1) stepRace(race, 0.1, { throttle: 1, brake: 0, steer: 0 });
+    expect(p.pitTimer).toBe(0);
+    expect(p.pits).toBe(1);
+    expect(p.car.grip).toBe(1);
+    expect(Math.abs(p.lateral)).toBeLessThan(track.width / 2);
+    expect(p.total).toBeGreaterThan(totalInPit);
+    expect(p.total).toBeLessThan(track.length + 120);
+    expect(p.completed).toBe(1);
   });
 
   it('pushes overlapping cars apart', () => {
