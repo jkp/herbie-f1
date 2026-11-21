@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { buildTrack, pointAt, type Track, type TrackDef } from './track';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { buildTrack, pointAt, wrapAngle, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
@@ -22,11 +23,33 @@ const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 // --- three.js setup ---
 const renderer = new THREE.WebGLRenderer({ canvas: $('gl') as HTMLCanvasElement, antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.75;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9cc7ef);
-scene.fog = new THREE.Fog(0x9cc7ef, 300, 1800);
-scene.add(new THREE.HemisphereLight(0xdff1ff, 0x4f6b3a, 1.6));
-const sun = new THREE.DirectionalLight(0xffffff, 1.8); sun.position.set(300, 500, 200); scene.add(sun);
+scene.fog = new THREE.Fog(0xc4d6e6, 350, 2200);
+// physical sky, also used as the environment for reflections on the paint
+const SUN_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(50), THREE.MathUtils.degToRad(140));
+const sky = new Sky(); sky.scale.setScalar(10000);
+Object.assign(sky.material.uniforms, { turbidity: { value: 3 }, rayleigh: { value: 1.2 }, mieCoefficient: { value: 0.004 }, mieDirectionalG: { value: 0.8 } });
+sky.material.uniforms.sunPosition.value.copy(SUN_DIR);
+scene.add(sky);
+{
+  const pmrem = new THREE.PMREMGenerator(renderer), env = new THREE.Scene(), envSky = new Sky();
+  envSky.scale.setScalar(1000); envSky.material.uniforms.sunPosition.value.copy(SUN_DIR); env.add(envSky);
+  scene.environment = pmrem.fromScene(env).texture;
+  scene.environmentIntensity = 0.2; // the raw sky is far brighter than the sun light it accompanies
+}
+scene.add(new THREE.HemisphereLight(0xdbeafe, 0x4b6b3a, 0.35));
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 600 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+/** Keep the shadow-casting area centred on what the camera is looking at. */
+function aimSun(x: number, z: number) {
+  sun.target.position.set(x, 0, z);
+  sun.position.set(x + SUN_DIR.x * 300, SUN_DIR.y * 300, z + SUN_DIR.z * 300);
+}
 const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 4000);
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
@@ -52,7 +75,7 @@ function newRace() {
   race = career && mode === 'career'
     ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career) })
     : createRace(track, { ...OPTS, player: driver, difficulty, laps });
-  carMeshes = race.racers.map(r => { const m = makeCar(r.color); scene.add(m); return m; });
+  carMeshes = race.racers.map(r => { const m = makeCar(r.team, r.number); scene.add(m); return m; });
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
 }
@@ -182,7 +205,7 @@ function showReview() {
 $('continue').onclick = () => (seasonOver(career!) ? showReview() : showHub());
 
 function playContract(t: Team, title: string, sub: string) {
-  const car = makeCar(t.color), box = pitBox(track, TEAMS.indexOf(t));
+  const car = makeCar(t, career?.number ?? 1), box = pitBox(track, TEAMS.indexOf(t));
   car.position.set(box.x, 0, box.z); scene.add(car);
   playCut({
     length: 6,
@@ -462,7 +485,7 @@ function startPitScene() {
 }
 
 // --- loop ---
-let acc = 0, prev = performance.now(), menuSpin = 0;
+let camYaw = 0, acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
   const dt = Math.min(0.1, (now - prev) / 1000); prev = now;
   if (screen === 'menu') {
@@ -470,6 +493,7 @@ function frame(now: number) {
     const p = pointAt(track, 0);
     camera.position.set(p.x + Math.cos(menuSpin) * 260, 120, p.z + Math.sin(menuSpin) * 260);
     camera.lookAt(p.x, 0, p.z);
+    aimSun(p.x, p.z);
     if (cut) { cut.t += dt; cut.update(cut.t); if (cut.t >= cut.length) endCut(); }
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
@@ -503,11 +527,17 @@ function frame(now: number) {
     camera.position.set(tv.x - Math.sin(tv.heading) * 30, 9, tv.z + Math.cos(tv.heading) * 30);
     camera.lookAt(c.x, 0.5, c.z);
   } else {
-    const k = 1 - Math.exp(-dt * 7);
-    camPos.lerp(new THREE.Vector3(c.x - fx * 8.5, 3, c.z - fz * 8.5), camPos.lengthSq() ? k : 1);
-    camLook.set(c.x + fx * 5, 1, c.z + fz * 5);
+    // fixed distance behind; only the camera's direction lags, so it swings out a little in corners
+    if (!camPos.lengthSq()) camYaw = c.heading;
+    camYaw += wrapAngle(c.heading - camYaw) * (1 - Math.exp(-dt * 6));
+    camPos.set(c.x - Math.cos(camYaw) * 7.5, 2.6, c.z - Math.sin(camYaw) * 7.5);
+    camLook.set(c.x + fx * 6, 1, c.z + fz * 6);
     camera.position.copy(camPos); camera.lookAt(camLook);
   }
+  // a wider view as speed builds sells the speed
+  const fov = (camMode === 1 ? 72 : 62) + Math.min(14, Math.abs(c.speed) * 0.15);
+  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
+  aimSun(c.x, c.z);
 
   updateHud(dt);
   audio.update(gearFor(c.speed).rpm, ctl.throttle);
@@ -519,4 +549,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch } });
+Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls }), three: { renderer, scene, sky } } });
