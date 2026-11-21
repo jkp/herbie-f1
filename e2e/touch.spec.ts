@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { pickRace } from './flow';
 
 test.use({ viewport: { width: 1133, height: 744 }, hasTouch: true, isMobile: true });
 
@@ -20,7 +21,7 @@ test('race on an iPad with on-screen controls', async ({ page }) => {
 
   await page.goto('/?countdown=0');
   await expect(page.locator('#touch')).toBeHidden(); // not over the menu
-  await page.locator('#menu').tap();
+  await pickRace(page, { track: 'Silverstone', team: 'Mercedes', driver: 'Lewis Hamilton' }, true);
   await expect(page.locator('#touch')).toBeVisible();
 
   const heading0 = await page.evaluate(() => (window as any).__game.race.player.car.heading);

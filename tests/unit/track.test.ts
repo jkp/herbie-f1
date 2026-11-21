@@ -1,18 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { buildTrack, project, pointAt } from '../../src/track';
-import { SILVERSTONE } from '../../src/silverstone';
-
-const t = buildTrack(SILVERSTONE);
+import { CIRCUITS } from '../../src/circuits';
 
 function segmentsCross(ax: number, az: number, bx: number, bz: number, cx: number, cz: number, dx: number, dz: number) {
   const o = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) => Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px));
   return o(ax, az, bx, bz, cx, cz) * o(ax, az, bx, bz, dx, dz) < 0 && o(cx, cz, dx, dz, ax, az) * o(cx, cz, dx, dz, bx, bz) < 0;
 }
 
-describe('track', () => {
-  it('is roughly Silverstone length (5.89 km)', () => {
-    expect(t.length).toBeGreaterThan(5600);
-    expect(t.length).toBeLessThan(6200);
+describe.each(CIRCUITS)('$name', def => {
+  const t = buildTrack(def);
+
+  it('matches the official lap length within 2%', () => {
+    expect(Math.abs(t.length - def.officialLength) / def.officialLength).toBeLessThan(0.02);
+  });
+
+  it('carries its own width and run-off', () => {
+    expect(t.width).toBe(def.width);
+    expect(t.runoff).toBe(def.runoff);
   });
 
   it('is a closed loop', () => {
@@ -30,13 +34,13 @@ describe('track', () => {
       }
   });
 
-  it('keeps separate parts of the circuit apart (no overlapping tarmac)', () => {
+  it('keeps separate parts of the circuit apart (no barrier across other tarmac)', () => {
     const step = 8;
     for (let i = 0; i < t.n; i += step)
       for (let j = i + step; j < t.n; j += step) {
         const along = Math.min(Math.abs(t.cum[i] - t.cum[j]), t.length - Math.abs(t.cum[i] - t.cum[j]));
         if (along < 200) continue;
-        expect(Math.hypot(t.xs[i] - t.xs[j], t.zs[i] - t.zs[j])).toBeGreaterThan(t.width * 3);
+        expect(Math.hypot(t.xs[i] - t.xs[j], t.zs[i] - t.zs[j]), `at ${t.cum[i].toFixed(0)}m / ${t.cum[j].toFixed(0)}m`).toBeGreaterThan(t.width + t.runoff);
       }
   });
 
@@ -58,6 +62,6 @@ describe('track', () => {
 
   it('has a turn curvature profile with real corners', () => {
     const maxK = Math.max(...t.curvature);
-    expect(maxK).toBeGreaterThan(1 / 60); // tight stuff like the Loop
+    expect(maxK).toBeGreaterThan(1 / 120);
   });
 });

@@ -1,6 +1,10 @@
 // Track geometry: a closed centreline resampled from survey points.
 // Heading h means forward = (cos h, sin h) in the (x, z) ground plane; +turn = right (clockwise on the minimap).
-export interface TrackDef { name: string; width: number; points: number[][] } // closed loop of [x, z], clockwise
+export interface TrackDef {
+  id: string; name: string; gp: string; country: string;
+  width: number; runoff: number; officialLength: number;
+  points: number[][]; // closed loop of [x, z] metres, clockwise, starting on the start/finish line
+}
 
 export interface Track {
   name: string;
