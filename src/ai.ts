@@ -18,15 +18,36 @@ export function speedProfile(t: Track): Float64Array {
   return v;
 }
 
-/** Pure-pursuit steering towards a point ahead on the racer's lane, throttle/brake to hold the speed profile. */
-export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
+/** Pure-pursuit steering input that follows the track `lane` metres right of the centreline. */
+export function pursuitSteer(r: Racer, race: Race, lane: number) {
   const c = r.car, v = Math.max(c.speed, 5);
   const ahead = pointAt(race.track, r.s + 6 + v * 0.3);
-  const tx = ahead.x - Math.sin(ahead.heading) * r.lane, tz = ahead.z + Math.cos(ahead.heading) * r.lane;
+  const tx = ahead.x - Math.sin(ahead.heading) * lane, tz = ahead.z + Math.cos(ahead.heading) * lane;
   const err = wrapAngle(Math.atan2(tz - c.z, tx - c.x) - c.heading);
   const ld = Math.hypot(tx - c.x, tz - c.z);
   const delta = Math.atan(3.6 * 2 * Math.sin(err) / ld);
-  const steer = Math.max(-1, Math.min(1, delta / maxSteerAngle(c.speed)));
+  return Math.max(-1, Math.min(1, delta / maxSteerAngle(c.speed)));
+}
+
+/** Driving help for the player on easy difficulties: brake for corners, keep the car on the road. */
+export function assistControls(r: Racer, race: Race, ctl: Controls, help: { brake: boolean; steer: boolean }): Controls {
+  const out = { ...ctl };
+  if (help.steer) {
+    // follow the track at the player's current line, so they can still move across to overtake
+    const lane = Math.max(-race.track.width / 2 + 2, Math.min(race.track.width / 2 - 2, r.lateral));
+    out.steer = Math.max(-1, Math.min(1, pursuitSteer(r, race, lane) + ctl.steer * 0.8));
+  }
+  if (help.brake) {
+    const target = race.profile[r.i] * Math.sqrt(r.car.grip);
+    if (r.car.speed > target + 0.5) { out.throttle = 0; out.brake = Math.max(ctl.brake, Math.min(1, (r.car.speed - target) / 4)); }
+  }
+  return out;
+}
+
+/** Pure-pursuit steering towards a point ahead on the racer's lane, throttle/brake to hold the speed profile. */
+export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
+  const c = r.car, v = Math.max(c.speed, 5);
+  const steer = pursuitSteer(r, race, r.lane);
 
   let target = race.profile[r.i] * skill * Math.sqrt(c.grip); // corner speed ∝ √grip
   // traffic: follow a slower car in our lane, and pull to its other side to pass

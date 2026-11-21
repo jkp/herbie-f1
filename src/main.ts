@@ -108,6 +108,9 @@ function pills(el: string, items: string[], selected: number, pick: (i: number) 
 const LAP_CHOICES = [3, 5, 10, 15];
 function renderSettings() {
   pills('difflist', DIFFICULTIES.map(d => d.name), difficulty, i => { difficulty = i; });
+  const help = DIFFICULTIES[difficulty].assist;
+  $('assist-note').textContent = help.steer ? 'Driving help: auto-braking, steering help and extra grip.'
+    : help.brake ? 'Driving help: auto-braking for corners.' : 'No driving help.';
   pills('lapslist', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(laps), i => { laps = LAP_CHOICES[i]; });
 }
 $('start-btn').onclick = startRace;
@@ -323,7 +326,8 @@ function updateHud(dt: number) {
   $('cur').textContent = fmt(race.phase === 'countdown' ? 0.0001 : race.time - p.lapStart);
   $('last').textContent = fmt(p.lastLap);
   $('best').textContent = fmt(p.bestLap);
-  const tyre = Math.round((p.car.grip - 0.74) / 0.26 * 100); // 0.74 is fully worn
+  const wear = p.car.grip / DIFFICULTIES[race.difficulty].assist.grip; // leave out easy-mode bonus grip
+  const tyre = Math.round((wear - 0.74) / 0.26 * 100); // 0.74 is fully worn
   $('tyres').textContent = `${tyre}%`;
   $('tyres').style.color = tyre > 60 ? '' : tyre > 30 ? '#facc15' : '#ef4444';
   $('box').classList.toggle('on', p.boxRequested);

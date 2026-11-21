@@ -1,6 +1,6 @@
 import { newCar, stepCar, type CarState, type Controls } from './car';
 import { pointAt, project, wrapAngle, type Track } from './track';
-import { aiControls, speedProfile } from './ai';
+import { aiControls, assistControls, speedProfile } from './ai';
 import { DRIVERS, TEAMS, type Team } from './grid';
 
 export interface Racer {
@@ -47,13 +47,15 @@ export function pitBox(t: Track, teamIndex: number, side = pitSide(t)) {
 
 
 // AI drive at `pace` × the speed profile × car pace × driver skill.
+// `assist`: driving help for the player (auto-brake, steering help, extra grip).
+const NONE = { brake: false, steer: false, grip: 1 };
 export const DIFFICULTIES = [
-  { name: 'Beginner', pace: 0.84 },
-  { name: 'Amateur', pace: 0.87 },
-  { name: 'Semi-Pro', pace: 0.9 },
-  { name: 'Pro', pace: 0.93 },
-  { name: 'World Class', pace: 0.955 },
-  { name: 'Legendary', pace: 0.98 },
+  { name: 'Beginner', pace: 0.74, assist: { brake: true, steer: true, grip: 1.25 } },
+  { name: 'Amateur', pace: 0.8, assist: { brake: true, steer: true, grip: 1.12 } },
+  { name: 'Semi-Pro', pace: 0.87, assist: { brake: true, steer: false, grip: 1 } },
+  { name: 'Pro', pace: 0.93, assist: NONE },
+  { name: 'World Class', pace: 0.955, assist: NONE },
+  { name: 'Legendary', pace: 0.98, assist: NONE },
 ];
 
 /** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
@@ -100,8 +102,9 @@ export function stepRace(race: Race, dt: number, player: Controls) {
   for (const r of race.racers) {
     if (r.pitTimer > 0) { r.pitTimer -= dt; if (r.pitTimer <= 0) leavePits(race, r); continue; }
     if (!r.isPlayer && !r.pits && r.completed + 1 >= r.pitLap) r.boxRequested = true;
-    r.car.grip = tyreGrip((r.total - r.tyreFrom) / track.length, race.laps);
-    const ctl = r.isPlayer && !r.finished ? player : aiControls(r, race);
+    const help = DIFFICULTIES[race.difficulty].assist;
+    r.car.grip = tyreGrip((r.total - r.tyreFrom) / track.length, race.laps) * (r.isPlayer ? help.grip : 1);
+    const ctl = r.isPlayer && !r.finished ? assistControls(r, race, player, help) : aiControls(r, race);
     stepCar(r.car, ctl, dt, Math.abs(r.lateral) <= edge + 1 ? 'track' : 'grass');
   }
 
