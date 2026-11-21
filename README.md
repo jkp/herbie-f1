@@ -53,6 +53,8 @@ Simulation code has no three.js dependency, so it runs headless in tests.
 
 ## Credits
 
+Buildings and tunnels: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL 1.0 — `src/buildings/*.json` (that data is available under the ODbL), fetched by `scripts/import-buildings.mjs`.
+
 People and animations: Quaternius "Universal Base Characters" and "Universal Animation Library" (CC0), built into `src/assets/*.glb` by `scripts/build-people.mjs`.
 
 ## Tests

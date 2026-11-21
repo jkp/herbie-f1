@@ -127,3 +127,11 @@ test('the player is called in for a compulsory stop without pressing BOX', async
   await expect(page.locator('#cutscene')).toContainText('PIT STOP');
   await page.keyboard.up('ArrowUp');
 });
+
+test('Monaco is surrounded by real buildings and has its tunnel', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Quick race' }).click();
+  await page.getByRole('button', { name: /^Monaco/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().buildings), { timeout: 15_000 }).toBeGreaterThan(800);
+  expect(await page.evaluate(() => (window as any).__game.stats().tunnels)).toBe(1);
+});

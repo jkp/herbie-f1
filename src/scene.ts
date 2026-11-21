@@ -149,7 +149,98 @@ function grandstand(rnd: () => number, fans: { m: THREE.Matrix4; shirt: THREE.Co
   return g;
 }
 
-export function buildWorld(t: Track) {
+/** Real surroundings from OpenStreetMap: building footprints `[height, x0, z0, x1, z1, …]` and tunnel ranges `[s0, s1]`. */
+export interface City { buildings: number[][]; tunnels: number[][] }
+
+function facadeTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 64, 64);
+  g.fillStyle = '#d8d8d8'; g.fillRect(0, 56, 64, 8); // floor band
+  g.fillStyle = '#4a5866'; g.fillRect(14, 14, 36, 34); // window
+  g.fillStyle = '#6b7c8c'; g.fillRect(14, 14, 36, 8);  // sky reflection
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+
+/** One mesh of walls (windows, one per ~4 m and per floor) and one of roofs, tinted per building. */
+function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
+  const wall = { pos: [] as number[], nrm: [] as number[], uv: [] as number[], col: [] as number[] };
+  const roof = { pos: [] as number[], nrm: [] as number[], col: [] as number[] };
+  const palette = (urban ? [0xf3e6c8, 0xe9cfa3, 0xf2d0b5, 0xffffff, 0xe8dcc4, 0xd9b38c, 0xf5e1a4, 0xf0c8a0] : [0xd6d3cd, 0xbfb8ad, 0xe5e1da, 0xa8a29e, 0xc9c2b8]).map(c => new THREE.Color(c));
+  const roofCols = [0x8a8580, 0x6f6a66, 0xa0522d, 0x9c9894].map(c => new THREE.Color(c));
+  for (const b of buildings) {
+    const h = b[0], pts: [number, number][] = [];
+    for (let k = 1; k < b.length; k += 2) pts.push([b[k], b[k + 1]]);
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    const col = h > 40 ? new THREE.Color(0xaebfcc) : palette[Math.floor(rnd() * palette.length)];
+    let u = 0;
+    for (let k = 0; k < pts.length; k++) {
+      const [ax, az] = pts[k], [bx, bz] = pts[(k + 1) % pts.length], len = Math.hypot(bx - ax, bz - az);
+      if (len < 0.01) continue;
+      // outward normal: perpendicular to the edge, away from the middle of the building
+      let nx = (bz - az) / len, nz = -(bx - ax) / len;
+      if (nx * ((ax + bx) / 2 - cx) + nz * ((az + bz) / 2 - cz) < 0) { nx = -nx; nz = -nz; }
+      const quad = [[ax, 0, az, u], [bx, 0, bz, u + len], [bx, h, bz, u + len], [ax, h, az, u]];
+      // wind each triangle so its face points along the outward normal: (b - a) × up · n
+      const flip = -(bz - az) * nx + (bx - ax) * nz < 0;
+      const order = flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3];
+      for (const i of order) {
+        const [x, y, z, uu] = quad[i];
+        wall.pos.push(x, y, z); wall.nrm.push(nx, 0, nz); wall.uv.push(uu / 4, y / 3.3); wall.col.push(col.r, col.g, col.b);
+      }
+      u += len;
+    }
+    const contour = pts.map(([x, z]) => new THREE.Vector2(x, z)), tris = THREE.ShapeUtils.triangulateShape(contour, []);
+    const rc = urban || h < 12 ? roofCols[Math.floor(rnd() * roofCols.length)] : roofCols[0];
+    for (const [i0, i1, i2] of tris) {
+      const [a, bb, c] = [pts[i0], pts[i1], pts[i2]];
+      // up-facing: (b - a) × (c - a) must have +y, i.e. clockwise in (x, z)
+      const up = (bb[1] - a[1]) * (c[0] - a[0]) - (bb[0] - a[0]) * (c[1] - a[1]) > 0;
+      for (const p of up ? [a, bb, c] : [a, c, bb]) { roof.pos.push(p[0], h, p[1]); roof.nrm.push(0, 1, 0); roof.col.push(rc.r, rc.g, rc.b); }
+    }
+  }
+  const geo = (d: { pos: number[]; nrm: number[]; col: number[]; uv?: number[] }) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(d.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(d.nrm, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(d.col, 3));
+    if (d.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(d.uv, 2));
+    return g;
+  };
+  const walls = new THREE.Mesh(geo(wall), new THREE.MeshStandardMaterial({ map: facadeTexture(), vertexColors: true, roughness: 0.8 }));
+  const roofs = new THREE.Mesh(geo(roof), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+  walls.castShadow = roofs.castShadow = true; walls.receiveShadow = roofs.receiveShadow = true;
+  walls.name = 'buildings';
+  return [walls, roofs];
+}
+
+/** A covered section: walls, a lit ceiling and the structure on top. */
+function buildTunnel(t: Track, s0: number, s1: number) {
+  const g = new THREE.Group(), edge = t.width / 2 + t.runoff + 0.2, inRange = (i: number) => t.cum[i] >= s0 && t.cum[i] <= s1;
+  const concrete = new THREE.MeshStandardMaterial({ color: 0x8f8b84, roughness: 0.95, side: THREE.DoubleSide });
+  const outside = new THREE.MeshStandardMaterial({ map: facadeTexture(), color: 0xf0e0c0, roughness: 0.85, side: THREE.DoubleSide });
+  for (const s of [-1, 1]) {
+    const inner = wall(t, s * edge, 0, 6, concrete, undefined, inRange); inner.receiveShadow = true;
+    g.add(inner, wall(t, s * edge, 6, 16, outside, undefined, inRange));
+  }
+  const ceiling = strip(t, -edge, edge, 6, concrete, inRange); ceiling.castShadow = true;
+  const top = strip(t, -edge, edge, 16, new THREE.MeshStandardMaterial({ color: 0x8a8580, roughness: 0.9 }), inRange); top.castShadow = true;
+  g.add(ceiling, top);
+  // strip lights along the ceiling
+  const lamps: THREE.Matrix4[] = [];
+  for (let i = 0; i < t.n; i += 4) if (inRange(i)) for (const s of [-1, 1]) {
+    const [x, z] = side(t, i, s * (edge - 1.5));
+    lamps.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 5.9, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -headingAt(t, i)), new THREE.Vector3(1, 1, 1)));
+  }
+  const lampMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 0.08, 0.25), new THREE.MeshStandardMaterial({ color: 0xfff1c4, emissive: 0xffe9a8, emissiveIntensity: 3 }), lamps.length);
+  lamps.forEach((m, k) => lampMesh.setMatrixAt(k, m));
+  g.add(lampMesh);
+  g.name = 'tunnel';
+  return g;
+}
+
+export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }, urban = false) {
   const world = new THREE.Group(), w = t.width / 2, runoff = t.runoff, tex = textures();
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (let i = 0; i < t.n; i++) {
@@ -157,8 +248,9 @@ export function buildWorld(t: Track) {
   }
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2, size = Math.max(maxX - minX, maxZ - minZ) + 1600;
 
-  const grassMap = tex.grass.clone(); grassMap.repeat.set(size / 24, size / 24); grassMap.needsUpdate = true;
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({ map: grassMap, roughness: 1 }));
+  // street circuits sit on paving, everywhere else on grass
+  const groundMap = (urban ? tex.asphalt : tex.grass).clone(); groundMap.repeat.set(size / (urban ? 12 : 24), size / (urban ? 12 : 24)); groundMap.needsUpdate = true;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({ map: groundMap, color: urban ? 0xd6d0c4 : 0xffffff, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.02, cz); ground.receiveShadow = true;
   world.add(ground);
 
@@ -251,10 +343,29 @@ export function buildWorld(t: Track) {
     world.add(g);
   });
 
-  // trees: trunks and layered crowns, scattered away from the circuit
+  // real buildings, kept clear of the grandstands and pit garages
+  const keepClear = [...standSpots(t).map(s => ({ x: s.x, z: s.z, r: 55 })), ...TEAMS.map((_, k) => { const b = pitBox(t, k, pitDir); return { x: b.x, z: b.z, r: 30 }; })];
+  const buildings = city.buildings.filter(b => {
+    for (let k = 1; k < b.length; k += 2) if (keepClear.some(c => Math.hypot(b[k] - c.x, b[k + 1] - c.z) < c.r)) return false;
+    return true;
+  });
+  if (buildings.length) world.add(...buildCity(buildings, urban, rnd));
+  for (const [s0, s1] of city.tunnels) world.add(buildTunnel(t, s0, s1));
+  world.userData.buildings = buildings.length; world.userData.tunnels = city.tunnels.length;
+  // building footprints on a 40 m grid, so trees don't grow through them
+  const occupied = new Set<string>();
+  for (const b of buildings) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let k = 1; k < b.length; k += 2) { x0 = Math.min(x0, b[k]); x1 = Math.max(x1, b[k]); z0 = Math.min(z0, b[k + 1]); z1 = Math.max(z1, b[k + 1]); }
+    for (let gx = Math.floor((x0 - 5) / 40); gx <= Math.floor((x1 + 5) / 40); gx++)
+      for (let gz = Math.floor((z0 - 5) / 40); gz <= Math.floor((z1 + 5) / 40); gz++) occupied.add(`${gx},${gz}`);
+  }
+
+  // trees: trunks and layered crowns, scattered away from the circuit and the buildings
   const trees: THREE.Matrix4[] = [];
-  for (let k = 0; trees.length < 900 && k < 6000; k++) {
+  for (let k = 0; trees.length < (urban ? 250 : 900) && k < 6000; k++) {
     const x = cx + (rnd() - 0.5) * size * 0.85, z = cz + (rnd() - 0.5) * size * 0.85;
+    if (occupied.has(`${Math.floor(x / 40)},${Math.floor(z / 40)}`)) continue;
     if (Math.abs(project(t, x, z).lateral) < w + runoff + 14) continue;
     const s = 0.7 + rnd() * 0.9;
     trees.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)));

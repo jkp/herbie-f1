@@ -11,7 +11,7 @@ import { reachWith } from './ik';
 import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
-import { buildWorld, makeCar } from './scene';
+import { buildWorld, makeCar, type City } from './scene';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
@@ -66,9 +66,16 @@ function loadTrack(d: TrackDef) {
   if (def === d) return;
   def = d; track = buildTrack(d);
   if (world) { scene.remove(world); world.traverse(o => (o as THREE.Mesh).geometry?.dispose()); }
-  world = buildWorld(track); scene.add(world);
+  world = null;
   mapPath = makeMapPath(track);
+  // the real surroundings (buildings, tunnels) load per circuit; the scenery is built once they arrive
+  const want = d;
+  CITY[`./buildings/${d.id}.json`]().then(m => {
+    if (def !== want) return;
+    world = buildWorld(track, m.default, d.urban); scene.add(world);
+  });
 }
+const CITY = import.meta.glob<{ default: City }>('./buildings/*.json');
 
 let screen: 'menu' | 'race' | 'results' = 'menu';
 let camMode = 0; // 0 chase, 1 cockpit, 2 TV
@@ -721,4 +728,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
