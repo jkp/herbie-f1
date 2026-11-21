@@ -18,4 +18,13 @@ export async function pickRace(page: Page, o: { track: string; team: string; dri
   await press(o.difficulty ?? 'Pro');
   await press(`${o.laps ?? 3} laps`);
   await press('Start race');
+  await skipCutscene(page, touch);
+}
+
+/** Skip whichever cutscene is playing (intro, podium…). */
+export async function skipCutscene(page: Page, touch = false) {
+  const c = page.locator('#cutscene');
+  await expect(c).toBeVisible();
+  await (touch ? c.tap() : c.click());
+  await expect(c).toBeHidden();
 }

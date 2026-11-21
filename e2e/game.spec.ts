@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { pickRace } from './flow';
+import { pickRace, skipCutscene } from './flow';
 
 test('pick a track, car and driver, then drive off the grid', async ({ page }) => {
   const errors: string[] = [];
@@ -48,17 +48,21 @@ test('results screen offers race again and main menu', async ({ page }) => {
   // jump the player to just short of the line on the final lap
   await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * r.laps - 0.001; });
   await page.keyboard.down('ArrowUp');
-  await expect(page.getByRole('heading', { name: 'CHEQUERED FLAG' })).toBeVisible();
+  await expect(page.locator('#cutscene')).toContainText('PODIUM');
   await page.keyboard.up('ArrowUp');
+  await skipCutscene(page);
+  await expect(page.getByRole('heading', { name: 'CHEQUERED FLAG' })).toBeVisible();
   await expect(page.locator('#verdict')).toContainText(/Italian Grand Prix|You finished P/);
   await expect(page.locator('#resrows tr')).toHaveCount(20);
 
   await page.getByRole('button', { name: 'Race again' }).click();
   await expect(page.locator('#results')).toBeHidden();
+  await skipCutscene(page);
   expect(await page.evaluate(() => (window as any).__game.race.player.completed)).toBe(0);
 
   await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * r.laps - 0.001; });
   await page.keyboard.down('ArrowUp');
+  await skipCutscene(page);
   await page.getByRole('button', { name: 'Main menu' }).click();
   await page.keyboard.up('ArrowUp');
   await expect(page.getByRole('heading', { name: 'Main menu' })).toBeVisible();
@@ -77,4 +81,18 @@ test('boxing plays the pit stop cutscene then rejoins on fresh tyres', async ({ 
   await page.keyboard.up('ArrowUp');
   const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, fresh: r.car.grip > 0.99, pit: r.pitTimer }; });
   expect(p).toEqual({ pits: 1, fresh: true, pit: 0 });
+});
+
+test('the intro cutscene names the Grand Prix and holds the start until it ends', async ({ page }) => {
+  await page.goto('/?countdown=1');
+  await page.getByRole('button', { name: 'Quick race' }).click();
+  await page.getByRole('button', { name: /^Monaco/ }).click();
+  await page.getByRole('button', { name: /Red Bull/ }).click();
+  await page.getByRole('button', { name: /Verstappen/ }).click();
+  await page.getByRole('button', { name: 'Start race' }).click();
+  await expect(page.locator('#cutscene')).toContainText('Monaco Grand Prix');
+  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => (window as any).__game.race.phase)).toBe('countdown');
+  await skipCutscene(page);
+  await expect.poll(() => page.evaluate(() => (window as any).__game.race.phase)).toBe('racing');
 });
