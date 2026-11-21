@@ -41,7 +41,7 @@
     #cut-title { font-size: clamp(34px, 6vw, 64px); font-weight: 900; letter-spacing: .04em; }
     #cut-sub { font-size: 20px; color: #e5e7eb; }
     #cutscene .skip { position: fixed; right: 18px; bottom: calc(11vh + 10px); font-size: 13px; color: var(--dim); }
-    body.cut .panel, body.cut #touch, body.cut #lights, body.cut #msg { display: none !important; }
+    body.cut .panel, body.cut #touch, body.cut #lights, body.cut #msg, body.cut .overlay { display: none !important; }
     #pos, #lap { font-size: 26px; font-weight: 700; line-height: 1; }
     #rpm { position: absolute; left: 0; right: 0; top: 0; height: 4px; border-radius: 6px 6px 0 0; overflow: hidden; }
     #rpm i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #22c55e, #facc15 70%, #e10600); }
@@ -85,6 +85,20 @@
     .pills button { padding: 10px 18px; border-radius: 999px; background: var(--panel); border: 1px solid rgba(255,255,255,.18); font-weight: 600; }
     .pills button[aria-pressed=true] { background: #facc15; color: #111; border-color: #facc15; }
     #settings .primary { margin-top: 10px; }
+    .lede { color: var(--dim); margin: -8px 0 16px; font-size: 17px; max-width: 640px; }
+    .lede b { color: var(--text); }
+    .form { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 10px; }
+    .form label { display: flex; flex-direction: column; gap: 6px; text-align: left; color: var(--dim); font-size: 14px; font-weight: 600; }
+    .form input { font: inherit; font-size: 20px; padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+      background: var(--panel); color: var(--text); width: 260px; }
+    .form input[type=number] { width: 140px; }
+    .error { color: #f87171; min-height: 1.4em; margin: 0 0 6px; font-weight: 600; }
+    .hub { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-bottom: 16px; }
+    .hub .card { min-width: 260px; }
+    .hub .card big { font-size: 26px; font-weight: 900; line-height: 1.1; }
+    #standings td { padding: 3px 10px; text-align: left; font-variant-numeric: tabular-nums; }
+    #standings tr.me td { color: #facc15; font-weight: 700; }
+    #standings td.pts { text-align: right; font-weight: 700; }
     .tablewrap { max-height: 60vh; overflow-y: auto; }
     #results td.team { color: var(--dim); font-size: 15px; }
     .overlay .go { margin-top: 26px; font-size: 22px; font-weight: 700; animation: pulse 1.4s infinite; }
@@ -155,6 +169,7 @@
       <h2>Main menu</h2>
       <div class="stack">
         <button id="race-btn" class="primary">Quick race</button>
+        <button id="career-btn" class="primary">Career</button>
       </div>
       <div class="keys">
         <b>↑ / W</b><span>Throttle</span>
@@ -181,6 +196,46 @@
       <div id="driverlist" class="choices"></div>
       <button class="back" data-back="teams">Back</button>
     </section>
+    <section id="career-new" class="hidden">
+      <h2 class="step">New career</h2>
+      <p class="lede">You're a 17-year-old rookie. Win races and the big teams will come calling.</p>
+      <div class="form">
+        <label>Driver name <input id="c-name" maxlength="20" autocomplete="off" /></label>
+        <label>Race number <input id="c-number" type="number" min="2" max="99" inputmode="numeric" value="17" /></label>
+      </div>
+      <h3>Difficulty</h3>
+      <div id="c-diff" class="pills"></div>
+      <h3>Race length</h3>
+      <div id="c-laps" class="pills"></div>
+      <p id="career-error" class="error" role="alert"></p>
+      <button id="c-next" class="primary">Next</button>
+      <button class="back" data-back="home">Back</button>
+    </section>
+    <section id="career-team" class="hidden">
+      <h2 class="step">Choose your first team</h2>
+      <div id="c-teamlist" class="choices"></div>
+      <button class="back" data-back="career-new">Back</button>
+    </section>
+    <section id="career-hub" class="hidden">
+      <h2 class="step">Career</h2>
+      <div class="hub">
+        <div class="card" id="hub-info"></div>
+        <div class="card" id="hub-next"></div>
+      </div>
+      <button id="hub-race" class="primary">Race</button>
+      <h3>Drivers' championship</h3>
+      <div class="tablewrap"><table id="standings"></table></div>
+      <div class="stack row">
+        <button class="back" data-back="home">Main menu</button>
+        <button class="back" id="hub-reset">Start a new career</button>
+      </div>
+    </section>
+    <section id="season-review" class="hidden">
+      <h2 class="step">Season review</h2>
+      <p id="review-info" class="lede"></p>
+      <h3>Contract offers</h3>
+      <div id="offerlist" class="choices"></div>
+    </section>
     <section id="settings" class="hidden">
       <h2 class="step">Race settings</h2>
       <h3>Difficulty</h3>
@@ -198,6 +253,7 @@
     <div class="tablewrap"><table><tbody id="resrows"></tbody></table></div>
     <div class="stack row">
       <button id="again" class="primary">Race again</button>
+      <button id="continue" class="primary hidden">Continue</button>
       <button id="home-btn" class="secondary">Main menu</button>
     </div>
   </div>

@@ -57,9 +57,13 @@ export const DIFFICULTIES = [
 ];
 
 /** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
-export function createRace(track: Track, o: { laps: number; countdown: number; player: string; size?: number; difficulty?: number }): Race {
-  const difficulty = o.difficulty ?? 3;
-  const field = [...DRIVERS].sort((a, b) => b.team.pace * b.skill - a.team.pace * a.skill);
+export function createRace(track: Track, o: {
+  laps: number; countdown: number; player: string; size?: number; difficulty?: number;
+  rookie?: { name: string; code: string; number: number; replaces: string }; // career driver taking a seat
+}): Race {
+  const difficulty = o.difficulty ?? 3, rk = o.rookie;
+  const drivers = DRIVERS.map(d => d.code === rk?.replaces ? { ...d, name: rk.name, code: rk.code, number: rk.number } : d);
+  const field = [...drivers].sort((a, b) => b.team.pace * b.skill - a.team.pace * a.skill);
   let entrants = field.slice(0, o.size ?? field.length);
   if (!entrants.some(d => d.code === o.player)) entrants = [...entrants.slice(0, -1), field.find(d => d.code === o.player)!];
   const racers: Racer[] = entrants.map((d, k) => {

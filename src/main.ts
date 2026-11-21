@@ -4,6 +4,7 @@ import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
 import { makeCrew, makePodium } from './scene';
+import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar } from './scene';
@@ -48,14 +49,16 @@ let camMode = 0; // 0 chase, 1 cockpit, 2 TV
 function clearCars() { carMeshes.forEach(m => scene.remove(m)); carMeshes = []; }
 function newRace() {
   clearCars();
-  race = createRace(track, { ...OPTS, player: driver, difficulty, laps });
+  race = career && mode === 'career'
+    ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career) })
+    : createRace(track, { ...OPTS, player: driver, difficulty, laps });
   carMeshes = race.racers.map(r => { const m = makeCar(r.color); scene.add(m); return m; });
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
 }
 
 // --- menus: home → track → car → driver → race ---
-const MENU_SCREENS = ['home', 'tracks', 'teams', 'drivers', 'settings'];
+const MENU_SCREENS = ['home', 'tracks', 'teams', 'drivers', 'settings', 'career-new', 'career-team', 'career-hub', 'season-review'];
 function showMenu(id: string) {
   screen = 'menu';
   document.body.classList.add('menu');
@@ -67,6 +70,7 @@ function showMenu(id: string) {
 function startRace() {
   newRace(); screen = 'race';
   document.body.classList.remove('menu'); $('menu').classList.add('hidden'); $('results').classList.add('hidden');
+  if (mode === 'quick') introSub = '';
   audio.start();
   playIntro();
 }
@@ -90,12 +94,13 @@ function showDrivers(t: Team) {
     () => { driver = d.code; showMenu('settings'); }, 'card')));
   showMenu('drivers');
 }
-$('teamlist').replaceChildren(...TEAMS.map(t => button(
-  `<span class="livery" style="background:${hex(t.color)}"></span><b>${esc(t.name)}</b><small>${t.drivers.map(d => esc(d.name)).join(' · ')}</small><span class="pace" title="Car pace"><i style="width:${Math.round((t.pace - 0.9) / 0.1 * 100)}%"></i></span>`,
-  () => showDrivers(t), 'card')));
-function pills(el: string, items: string[], selected: number, pick: (i: number) => void) {
+const teamCard = (t: Team, onClick: () => void, label = esc(t.name), sub = t.drivers.map(d => esc(d.name)).join(' · ')) => button(
+  `<span class="livery" style="background:${hex(t.color)}"></span><b>${label}</b><small>${sub}</small><span class="pace" title="Car pace"><i style="width:${Math.round((t.pace - 0.9) / 0.1 * 100)}%"></i></span>`,
+  onClick, 'card');
+$('teamlist').replaceChildren(...TEAMS.map(t => teamCard(t, () => showDrivers(t))));
+function pills(el: string, items: string[], selected: number, pick: (i: number) => void, rerender = renderSettings) {
   $(el).replaceChildren(...items.map((label, i) => {
-    const b = button(label, () => { pick(i); renderSettings(); });
+    const b = button(label, () => { pick(i); rerender(); });
     b.setAttribute('aria-pressed', String(i === selected));
     return b;
   }));
@@ -106,7 +111,87 @@ function renderSettings() {
   pills('lapslist', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(laps), i => { laps = LAP_CHOICES[i]; });
 }
 $('start-btn').onclick = startRace;
-$('race-btn').onclick = () => showMenu('tracks');
+$('race-btn').onclick = () => { mode = 'quick'; showMenu('tracks'); };
+
+// --- career ---
+const SAVE = 'herbie-f1-career';
+let mode: 'quick' | 'career' = 'quick';
+let career: Career | null = (() => { try { return JSON.parse(localStorage.getItem(SAVE) ?? 'null'); } catch { return null; } })();
+function saveCareer() { try { if (career) localStorage.setItem(SAVE, JSON.stringify(career)); else localStorage.removeItem(SAVE); } catch { /* private mode: career lasts this visit */ } }
+const draft = { difficulty: 3, laps: 15 };
+function renderCareerNew() {
+  pills('c-diff', DIFFICULTIES.map(d => d.name), draft.difficulty, i => { draft.difficulty = i; }, renderCareerNew);
+  pills('c-laps', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(draft.laps), i => { draft.laps = LAP_CHOICES[i]; }, renderCareerNew);
+}
+$('career-btn').onclick = () => {
+  mode = 'career';
+  if (career) return showHub();
+  renderCareerNew(); $('career-error').textContent = ''; showMenu('career-new'); $('c-name').focus();
+};
+$('c-next').onclick = () => {
+  const name = ($('c-name') as HTMLInputElement).value.trim(), num = Number(($('c-number') as HTMLInputElement).value);
+  const problem = !name ? 'Type your driver name.' : numberProblem(num);
+  $('career-error').textContent = problem ?? '';
+  if (problem) return;
+  $('c-teamlist').replaceChildren(...TEAMS.map(t => teamCard(t, () => {
+    career = newCareer({ name, number: num, team: t.name, difficulty: draft.difficulty, laps: draft.laps });
+    saveCareer();
+    playContract(t, `Welcome to ${t.name}`, `${name} · #${num} · age 17 · season 1`);
+  }, esc(t.name), `Replace ${esc(t.drivers[1].name)}`)));
+  showMenu('career-team');
+};
+function showHub() {
+  const c = career!, next = CALENDAR[c.round], team = TEAMS.find(t => t.name === c.team)!;
+  const table = championship(c), pos = table.findIndex(e => e.code === c.code) + 1;
+  loadTrack(next);
+  $('hub-info').innerHTML = `<span class="livery" style="background:${hex(team.color)}"></span><big>${esc(c.name)} #${c.number}</big>
+    <small>${esc(c.team)} · Season ${c.season} · Age ${c.age}</small><small>Championship: P${pos} · ${c.points[c.code] ?? 0} pts</small>`;
+  $('hub-next').innerHTML = `${outline(next)}<b>${esc(next.gp)}</b><small>Round ${c.round + 1} of ${CALENDAR.length} · ${esc(next.name)} · ${c.laps} laps</small>`;
+  $('standings').innerHTML = table.map((e, k) => `<tr class="${e.code === c.code ? 'me' : ''}"><td>${k + 1}</td><td>${e.code}</td><td>${esc(e.name)}</td><td class="team">${esc(e.team)}</td><td class="pts">${e.points}</td></tr>`).join('');
+  showMenu('career-hub');
+}
+$('hub-race').onclick = () => {
+  const c = career!;
+  introSub = `Round ${c.round + 1} of ${CALENDAR.length} · ${def.name} · ${c.laps} laps`;
+  startRace();
+};
+$('hub-reset').onclick = () => {
+  if (!confirm('Start a new career? Your current one will be lost.')) return;
+  career = null; saveCareer(); $('career-btn').click();
+};
+function showReview() {
+  const c = career!, table = championship(c), pos = table.findIndex(e => e.code === c.code) + 1;
+  $('review-info').innerHTML = pos === 1
+    ? `<b>World Champion!</b> ${esc(c.name)} wins the season ${c.season} title with ${c.points[c.code]} points.`
+    : `Season ${c.season}: <b>P${pos}</b> in the championship with ${c.points[c.code] ?? 0} points.`;
+  const sign = (t: Team) => {
+    const moving = t.name !== c.team;
+    nextSeason(c, t.name); saveCareer();
+    if (moving) playContract(t, 'CONTRACT SIGNED', `${c.name} joins ${t.name} for season ${c.season}`);
+    else showHub();
+  };
+  const current = TEAMS.find(t => t.name === c.team)!;
+  $('offerlist').replaceChildren(
+    ...offers(c).map(n => TEAMS.find(t => t.name === n)!).map(t => teamCard(t, () => sign(t), `Sign for ${esc(t.name)}`, 'Wants you next season')),
+    teamCard(current, () => sign(current), `Stay at ${esc(current.name)}`, 'Another season with the team'));
+  showMenu('season-review');
+}
+$('continue').onclick = () => (seasonOver(career!) ? showReview() : showHub());
+
+function playContract(t: Team, title: string, sub: string) {
+  const car = makeCar(t.color), box = pitBox(track, TEAMS.indexOf(t));
+  car.position.set(box.x, 0, box.z); scene.add(car);
+  playCut({
+    length: 6,
+    update(time) {
+      car.rotation.y = time * 0.6;
+      const a = -box.heading + 0.8;
+      camera.position.set(box.x + Math.cos(a) * 8, 2.2, box.z + Math.sin(a) * 8);
+      camera.lookAt(box.x, 0.6, box.z);
+    },
+    end() { scene.remove(car); showHub(); },
+  }, title, sub);
+}
 document.querySelectorAll<HTMLElement>('[data-back]').forEach(b => { b.onclick = () => showMenu(b.dataset.back!); });
 $('again').onclick = startRace;
 $('home-btn').onclick = () => { clearCars(); showMenu('home'); };
@@ -272,6 +357,10 @@ function updateHud(dt: number) {
 function showResults() {
   const order = standings(race), pos = order.indexOf(race.player) + 1, winner = order[0];
   $('verdict').textContent = pos === 1 ? `You won the ${def.gp}!` : `You finished P${pos}`;
+  const inCareer = mode === 'career' && !!career;
+  if (inCareer) { recordRace(career!, order.map(r => r.code)); saveCareer(); }
+  $('again').classList.toggle('hidden', inCareer); $('home-btn').classList.toggle('hidden', inCareer);
+  $('continue').classList.toggle('hidden', !inCareer);
   $('resrows').innerHTML = order.map((r, k) => `<tr class="${r.isPlayer ? 'me' : ''}"><td>${k + 1}</td><td>${esc(r.name)}</td><td class="team">${esc(r.team.name)}</td><td>${
     r === winner ? fmt(r.finishTime) : r.finished ? `+${(r.finishTime - winner.finishTime).toFixed(3)}s` : `${r.completed}/${race.laps} laps`
   }</td><td>Best ${fmt(r.bestLap)}</td></tr>`).join('');
@@ -377,6 +466,7 @@ function frame(now: number) {
     const p = pointAt(track, 0);
     camera.position.set(p.x + Math.cos(menuSpin) * 260, 120, p.z + Math.sin(menuSpin) * 260);
     camera.lookAt(p.x, 0, p.z);
+    if (cut) { cut.t += dt; cut.update(cut.t); if (cut.t >= cut.length) endCut(); }
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
     return;

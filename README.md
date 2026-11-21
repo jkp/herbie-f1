@@ -13,6 +13,10 @@ npm run dev
 
 Open the printed URL: **Quick race** → track → car → driver → settings.
 
+**Career**: create a 17-year-old rookie (name, number, difficulty, race length), pick a first team and race an 11-round season. Points follow F1 rules; finish high enough in the championship and bigger teams offer you a seat for next season. Progress is saved in the browser.
+
+Cutscenes: race intro, pit stops, podium, contract signings (tap or Enter to skip).
+
 | Key | Action |
 | --- | --- |
 | ↑ / W | Throttle |
@@ -38,7 +42,8 @@ URL options: `?size=10&countdown=0` (`size` trims the field).
 | `src/ai.ts` | Speed profile and pure-pursuit AI drivers |
 | `src/race.ts` | Grid, countdown, laps, collisions, barriers, standings |
 | `src/scene.ts` | Track, scenery and car meshes |
-| `src/main.ts` | Menus, render loop, input, camera, HUD, engine sound |
+| `src/career.ts` | Career rules: calendar, points, championship, contract offers |
+| `src/main.ts` | Menus, cutscenes, render loop, input, camera, HUD, engine sound |
 
 Simulation code has no three.js dependency, so it runs headless in tests.
 
