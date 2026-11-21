@@ -117,3 +117,13 @@ test('a real driver sits in your car, and the pit crew time the stop', async ({ 
   await page.keyboard.up('ArrowUp');
   expect(errors).toEqual([]);
 });
+
+test('the player is called in for a compulsory stop without pressing BOX', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Bahrain', team: 'Alpine', driver: 'Fernando Alonso', laps: 3 });
+  // lap 2 of 3 is the pit lap: jump to the end of it
+  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * 2 - 0.001; r.player.completed = 1; });
+  await page.keyboard.down('ArrowUp');
+  await expect(page.locator('#cutscene')).toContainText('PIT STOP');
+  await page.keyboard.up('ArrowUp');
+});

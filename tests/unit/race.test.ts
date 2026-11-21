@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildTrack, pointAt } from '../../src/track';
 import { CIRCUITS } from '../../src/circuits';
-import { createRace, stepRace, standings, DIFFICULTIES, PIT_TIME, tyreGrip } from '../../src/race';
+import { createRace, stepRace, standings, DIFFICULTIES, PIT_TIME, tyreGrip, pitPlan } from '../../src/race';
 import { DRIVERS } from '../../src/grid';
 
 const track = buildTrack(CIRCUITS[0]);
@@ -115,6 +115,37 @@ describe('race', () => {
     stepRace(race, 1 / 120, idle);
     expect(p.car.speed).toBeGreaterThan(30);
     expect(Math.abs(p.car.heading - pt.heading)).toBeLessThan(0.05);
+  });
+
+  it('makes every car stop once in short races and twice in 10+ lap races, spread through the race', () => {
+    expect(pitPlan(3)).toEqual([2]);
+    expect(pitPlan(5)).toEqual([3]);
+    expect(pitPlan(10)).toEqual([3, 7]);
+    expect(pitPlan(15)).toEqual([5, 10]);
+    expect(pitPlan(2)).toEqual([]);
+  });
+
+  it('gives every car, player included, the same number of compulsory stops', () => {
+    const race = createRace(track, { laps: 15, countdown: 0, player: 'VER' });
+    for (const r of race.racers) {
+      expect(r.pitLaps, r.code).toHaveLength(2);
+      for (const lap of r.pitLaps) { expect(lap).toBeGreaterThanOrEqual(1); expect(lap).toBeLessThan(15); }
+      expect(r.pitLaps[1]).toBeGreaterThan(r.pitLaps[0]);
+    }
+    expect(race.player.pitLaps).toEqual(pitPlan(15));
+  });
+
+  it('takes the player in automatically on their pit lap', () => {
+    const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player;
+    for (let s = -20; s <= track.length * 2 + 2; s += 5) {
+      const pt = pointAt(track, s);
+      p.car.x = pt.x; p.car.z = pt.z; p.car.heading = pt.heading;
+      stepRace(race, 0.1, idle);
+      if (p.pitTimer > 0) break;
+    }
+    expect(p.completed).toBe(2);
+    expect(p.pitTimer).toBeGreaterThan(0);
   });
 
   it('wears tyres over the race, faster in short races', () => {
