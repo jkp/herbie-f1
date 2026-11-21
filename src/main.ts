@@ -337,7 +337,7 @@ function makeMapPath(track: Track) {
   path.closePath();
   return { path, tx: (x: number) => x * sc + ox, tz: (z: number) => z * sc + oz };
 }
-let lastPos = 20, msgTimer = 0;
+let lastPos = 20, msgTimer = 0, boxCalled = false;
 function flash(text: string) { $('msg').textContent = text; $('msg').style.opacity = '1'; msgTimer = 2; }
 
 function updateHud(dt: number) {
@@ -357,6 +357,8 @@ function updateHud(dt: number) {
   const tyre = Math.round((wear - 0.74) / 0.26 * 100); // 0.74 is fully worn
   $('tyres').textContent = `${tyre}%`;
   $('tyres').style.color = tyre > 60 ? '' : tyre > 30 ? '#facc15' : '#ef4444';
+  if (p.boxRequested && !boxCalled && race.phase === 'racing') flash('BOX, BOX · PIT THIS LAP');
+  boxCalled = p.boxRequested;
   $('box').classList.toggle('on', p.boxRequested);
   touchLayer.querySelector('[data-act=box]')!.classList.toggle('on', p.boxRequested);
   const leader = order[0];

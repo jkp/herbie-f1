@@ -15,7 +15,8 @@ export interface Racer {
   tyreFrom: number;      // `total` when the current tyres went on
   boxRequested: boolean; // pit at the end of this lap
   pitTimer: number;      // > 0 while in the pits
-  pits: number; pitLap: number; stopTime: number;
+  pits: number; stopTime: number;
+  pitLaps: number[];     // compulsory stops: pit at the end of these laps
 }
 export interface Race {
   track: Track; profile: Float64Array; racers: Racer[]; player: Racer;
@@ -26,6 +27,12 @@ export interface Race {
 const CAR_RADIUS = 2.2;
 /** Race-seconds lost to a pit stop: pit lane plus the stationary time. */
 export const PIT_TIME = 20;
+
+/** Compulsory stops, as the laps to pit at the end of: one in short races, two from 10 laps, evenly spaced. */
+export function pitPlan(laps: number) {
+  const stops = laps >= 10 ? 2 : laps >= 3 ? 1 : 0;
+  return Array.from({ length: stops }, (_, k) => Math.round(laps * (k + 1) / (stops + 1)));
+}
 
 /** Tyre grip after `lapsOn` laps; tyres last about half a race, so long races want one stop. */
 export const tyreGrip = (lapsOn: number, raceLaps: number) =>
@@ -78,8 +85,9 @@ export function createRace(track: Track, o: {
       car, i: p.i, s: track.length - back, lateral: side, total: -back,
       completed: 0, lapStart: 0, lastLap: 0, bestLap: 0, finished: false, finishTime: 0,
       tyreFrom: -back, boxRequested: false, pitTimer: 0, pits: 0, stopTime: 0,
-      // AI stop around half distance, spread ±1 lap; no stops in short races
-      pitLap: o.laps >= 5 ? Math.min(o.laps - 1, Math.max(2, Math.round(o.laps / 2) + (k * 7) % 3 - 1)) : Infinity,
+      // everyone makes the same number of stops; AI spread their timing by up to a lap either way
+      pitLaps: pitPlan(o.laps).map((lap, i, plan) => d.code === o.player ? lap
+        : Math.min(o.laps - 1 - (plan.length - 1 - i), Math.max(1 + i, lap + ((k * 7 + i * 3) % 3) - 1))),
     };
   });
   return {
@@ -101,7 +109,7 @@ export function stepRace(race: Race, dt: number, player: Controls) {
   const out = race.racers.filter(r => r.pitTimer <= 0);
   for (const r of race.racers) {
     if (r.pitTimer > 0) { r.pitTimer -= dt; if (r.pitTimer <= 0) leavePits(race, r); continue; }
-    if (!r.isPlayer && !r.pits && r.completed + 1 >= r.pitLap) r.boxRequested = true;
+    if (r.pits < r.pitLaps.length && r.completed + 1 >= r.pitLaps[r.pits]) r.boxRequested = true;
     const help = DIFFICULTIES[race.difficulty].assist;
     r.car.grip = tyreGrip((r.total - r.tyreFrom) / track.length, race.laps) * (r.isPlayer ? help.grip : 1);
     const ctl = r.isPlayer && !r.finished ? assistControls(r, race, player, help) : aiControls(r, race);
