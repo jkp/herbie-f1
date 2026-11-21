@@ -101,3 +101,19 @@ test('the circuit has grandstands full of fans', async ({ page }) => {
   await page.goto('/');
   await expect.poll(() => page.evaluate(() => (window as any).__game.stats().fans)).toBeGreaterThan(2000);
 });
+
+test('a real driver sits in your car, and the pit crew time the stop', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?countdown=0');
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().people), { timeout: 20_000 }).toBe(true);
+  await pickRace(page, { track: 'Monza', team: 'McLaren', driver: 'Lando Norris', laps: 5 });
+  expect(await page.evaluate(() => (window as any).__game.stats().driver)).toBe(true);
+  await page.keyboard.press('KeyC'); // cockpit
+  await page.keyboard.press('KeyB');
+  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length - 0.001; });
+  await page.keyboard.down('ArrowUp');
+  await expect(page.locator('#cut-sub')).toHaveText(/^Stationary \d\.\ds/, { timeout: 10_000 });
+  await page.keyboard.up('ArrowUp');
+  expect(errors).toEqual([]);
+});

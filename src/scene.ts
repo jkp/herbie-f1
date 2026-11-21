@@ -268,13 +268,16 @@ export function buildWorld(t: Track) {
   return world;
 }
 
-/** Podium: [winner, second, third] team colours; drivers stand on the steps. Front faces +x. */
-export function makePodium(colors: number[]) {
+/** Podium steps for [winner, second, third], each step's top at `PODIUM_STEPS`; front faces +x. Without `people`, stand-in figures. */
+export const PODIUM_STEPS = [[0, 0.9], [2.2, 0.6], [-2.2, 0.4]] as const; // [z, height]
+export function makePodium(colors: number[], withFigures = true) {
   const g = new THREE.Group(), stone = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, roughness: 0.4 });
-  const back = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6, 12), new THREE.MeshStandardMaterial({ color: 0xe10600 }));
-  back.position.set(-2.5, 3, 0); g.add(back);
-  [[0, 1.6], [3.1, 1.1], [-3.1, 0.7]].forEach(([z, h], k) => {
-    const step = new THREE.Mesh(new THREE.BoxGeometry(3, h, 3), stone); step.position.set(0, h / 2, z);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4, 8), new THREE.MeshStandardMaterial({ color: 0xe10600 }));
+  back.position.set(-1.6, 2, 0); g.add(back);
+  PODIUM_STEPS.forEach(([z, h], k) => {
+    const step = new THREE.Mesh(new THREE.BoxGeometry(2, h, 2.2), stone); step.position.set(0, h / 2, z);
+    step.receiveShadow = true;
+    if (!withFigures) { g.add(step); return; }
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.3, 10), new THREE.MeshStandardMaterial({ color: colors[k] }));
     body.position.set(0, h + 0.65, z);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), new THREE.MeshStandardMaterial({ color: 0xfafafa }));
@@ -353,7 +356,7 @@ function carGeometry() {
   box(carbon, 0.12, 0.5, 0.06, -2.15, 0.62, 0);
   // halo: hoop round the cockpit plus centre pillar
   const halo = new THREE.TorusGeometry(0.36, 0.03, 8, 24, Math.PI); halo.rotateX(Math.PI / 2); halo.rotateY(-Math.PI / 2); halo.translate(0.3, 0.92, 0); carbon.push(halo);
-  const pillar = new THREE.CylinderGeometry(0.025, 0.03, 0.42, 8); pillar.rotateZ(0.95); pillar.translate(0.82, 0.8, 0); carbon.push(pillar);
+  const pillar = new THREE.CylinderGeometry(0.014, 0.02, 0.42, 8); pillar.rotateZ(0.95); pillar.translate(0.82, 0.8, 0); carbon.push(pillar);
   // mirrors
   for (const z of [-0.52, 0.52]) { box(carbon, 0.05, 0.22, 0.03, 0.75, 0.75, z * 0.9); box(body, 0.08, 0.06, 0.18, 0.78, 0.88, z); }
   // suspension arms to each wheel

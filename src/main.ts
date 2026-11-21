@@ -4,7 +4,10 @@ import { buildTrack, pointAt, wrapAngle, type Track, type TrackDef } from './tra
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
-import { makeCrew, makePodium } from './scene';
+import { makeCrew, makePodium, PODIUM_STEPS } from './scene';
+import { People, type Person } from './people';
+import { pitTimeline } from './pitstop';
+import { reachWith } from './ik';
 import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
@@ -50,7 +53,7 @@ function aimSun(x: number, z: number) {
   sun.target.position.set(x, 0, z);
   sun.position.set(x + SUN_DIR.x * 300, SUN_DIR.y * 300, z + SUN_DIR.z * 300);
 }
-const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 4000);
+const camera = new THREE.PerspectiveCamera(65, 1, 0.05, 4000);
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 
@@ -76,6 +79,7 @@ function newRace() {
     ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career) })
     : createRace(track, { ...OPTS, player: driver, difficulty, laps });
   carMeshes = race.racers.map(r => { const m = makeCar(r.team, r.number); scene.add(m); return m; });
+  seatDriver();
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
 }
@@ -432,7 +436,15 @@ let introSub = '';
 function playPodium() {
   const top = standings(race).slice(0, 3), mine = top.indexOf(race.player);
   const box = pitBox(track, 4, race.pitSide), side = race.pitSide;
-  const podium = makePodium(top.map(r => r.color));
+  const podium = makePodium(top.map(r => r.color), !people);
+  // the top three in their race suits: winner dancing, the others celebrating and chatting
+  const celebrants = people ? top.map((r, k) => {
+    const m = people!.make({ suit: r.team.livery[0], gloves: r.team.livery[1] });
+    const [z, h] = PODIUM_STEPS[k];
+    m.root.position.set(0, h, z); m.root.rotation.y = Math.PI / 2; // model faces +z; podium front is +x
+    m.play(['Dance_Loop', 'Jump_Loop', 'Idle_Talking_Loop'][k], 0); m.update(k * 0.7);
+    podium.add(m.root); return m;
+  }) : [];
   // out beyond the garages, facing the track
   podium.position.set(box.x - Math.sin(box.heading) * side * 40, 0, box.z + Math.cos(box.heading) * side * 40);
   podium.rotation.y = -box.heading + side * Math.PI / 2;
@@ -445,21 +457,100 @@ function playPodium() {
   playCut({
     length: 7,
     update(t) {
-      const a = podium.rotation.y + Math.sin(t * 0.3) * 0.5;
-      camera.position.set(podium.position.x + Math.cos(-a) * 11, 3.2, podium.position.z + Math.sin(-a) * 11);
-      camera.lookAt(podium.position.x, 2, podium.position.z);
+      const a = podium.rotation.y + Math.sin(t * 0.3) * 0.45;
+      camera.position.set(podium.position.x + Math.cos(-a) * 7.5, 2.1, podium.position.z + Math.sin(-a) * 7.5);
+      camera.lookAt(podium.position.x, 1.5, podium.position.z);
       for (const b of bits) {
         const y = ((b.y - t * b.s) % 10 + 10) % 10;
         q.setFromEuler(new THREE.Euler(t * 3 * b.s, b.k, t * 2));
         confetti.setMatrixAt(b.k, m.compose(new THREE.Vector3(b.x + Math.sin(t + b.k) * 0.3, y, b.z), q, new THREE.Vector3(1, 1, 1)));
       }
       confetti.instanceMatrix.needsUpdate = true;
+      celebrants.forEach(c => c.update(1 / 60));
     },
     end() { scene.remove(podium, confetti); showResults(); },
   }, mine >= 0 ? `YOU FINISHED P${mine + 1}!` : 'PODIUM', top.map((r, k) => `${k + 1} ${r.code}`).join('  ·  '));
 }
 
 function startPitScene() {
+  const p = race.player, mesh = carMeshes[race.racers.indexOf(p)];
+  if (!people) return startSimplePitScene();
+  const T = pitTimeline(p.stopTime), box = mesh.position.clone(), heading = race.player.car.heading;
+  const fwd = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
+  // the crew, laid out in the car's frame (nose +x, right +z), all facing the car
+  const crewRoot = new THREE.Group(); crewRoot.position.copy(box); crewRoot.rotation.y = -heading; scene.add(crewRoot);
+  const style = { suit: p.team.livery[0], legs: 0x23252b, helmet: p.team.livery[1] };
+  const place = (x: number, z: number, clip: string, face: number) => {
+    const m = people!.make(style); m.root.position.set(x, 0, z); m.root.rotation.y = face; m.play(clip, 0);
+    m.update(Math.random() * 2); // out of step with each other
+    crewRoot.add(m.root); return m;
+  };
+  const faceIn = (z: number) => (z > 0 ? Math.PI : 0); // model faces +z
+  const crew: Person[] = [];
+  const tyreProps: { held: THREE.Object3D; old: THREE.Object3D; wheel: THREE.Object3D; from: THREE.Vector3; to: THREE.Vector3 }[] = [];
+  const wheels = mesh.userData.wheels as THREE.Object3D[];
+  for (const [x, z] of [[1.85, 0.82], [1.85, -0.82], [-1.75, 0.82], [-1.75, -0.82]]) {
+    const out = Math.sign(z);
+    crew.push(place(x, out * 1.45, 'Fixing_Kneeling', faceIn(out)));        // wheel gun
+    crew.push(place(x - 0.75, out * 1.9, 'Idle_Loop', faceIn(out)));         // takes the old wheel
+    crew.push(place(x + 0.75, out * 1.9, 'Idle_Talking_Loop', faceIn(out))); // brings the new wheel
+    const wheel = wheels.find(w => Math.abs(w.parent!.position.x - x) < 0.1 && Math.sign(w.parent!.position.z) === out)!;
+    const held = wheel.clone(), old = wheel.clone();
+    held.position.set(x + 0.75, 0.75, out * 1.55); old.position.set(x - 0.75, 0.55, out * 1.6); old.visible = false;
+    crewRoot.add(held, old);
+    tyreProps.push({ held, old, wheel, from: new THREE.Vector3(x + 0.75, 0.75, out * 1.55), to: new THREE.Vector3(x, 0.36, z) });
+  }
+  crew.push(place(3.9, 0, 'Push_Loop', -Math.PI / 2));   // front jack
+  crew.push(place(-3.3, 0, 'Push_Loop', Math.PI / 2));   // rear jack
+  crew.push(place(0.1, 1.35, 'Crouch_Idle_Loop', Math.PI), place(0.1, -1.35, 'Crouch_Idle_Loop', 0)); // stabilisers
+  const jackMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, metalness: 0.7, roughness: 0.35 });
+  for (const [x, len] of [[3.45, 0.9], [-2.75, 0.8]]) {
+    const jack = new THREE.Mesh(new THREE.BoxGeometry(len, 0.06, 0.08), jackMat); jack.position.set(x, 0.35, 0); jack.rotation.z = x > 0 ? -0.35 : 0.35; crewRoot.add(jack);
+  }
+  // release light on a gantry ahead of the car
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 2 });
+  const gantry = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.6, 0.1), jackMat); gantry.position.set(5.4, 1.3, -1.9);
+  const light = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.35, 0.35), lightMat); light.position.set(5.3, 2.5, -1.9);
+  crewRoot.add(gantry, light);
+
+  const ease = (k: number) => k * k * (3 - 2 * k), clamp01 = (k: number) => Math.max(0, Math.min(1, k));
+  playCut({
+    length: T.end,
+    update(t) {
+      // in down the pit lane, stop on the marks, out again on the green
+      const along = t < T.arrive ? -22 * (1 - ease(clamp01(t / T.arrive))) : t > T.go ? 14 * clamp01((t - T.go) / (T.end - T.go)) ** 2 : 0;
+      const lift = t > T.jackUp && t < T.jackDown ? 0.09 * clamp01((t - T.jackUp) / 0.12) : 0;
+      mesh.position.copy(box).addScaledVector(fwd, along); mesh.position.y = lift;
+      for (const pr of tyreProps) {
+        const swapping = t > T.wheelsOff && t < T.wheelsOn;
+        pr.wheel.visible = !swapping;
+        pr.old.visible = t > T.wheelsOff;
+        // new wheel moves from the crewman's hands onto the hub just before it's tightened
+        const k = clamp01((t - (T.wheelsOn - 0.3)) / 0.3);
+        pr.held.position.lerpVectors(pr.from, pr.to, ease(k)); pr.held.position.y += lift;
+        pr.held.visible = t < T.wheelsOn;
+      }
+      lightMat.color.setHex(t > T.go ? 0x22ff44 : 0xff2222); lightMat.emissive.setHex(t > T.go ? 0x00ff22 : 0xff0000);
+      crew.forEach(c => c.update(1 / 60));
+      if (t > T.arrive && t < T.go) $('cut-sub').textContent = `Stationary ${(t - T.arrive).toFixed(1)}s`;
+      if (t >= T.go) $('cut-sub').textContent = `Stationary ${p.stopTime.toFixed(1)}s · fresh tyres`;
+      // low camera off the front corner, crew side
+      const cam = new THREE.Vector3(4.6, 1.2, 4.2 - t * 0.15).applyAxisAngle(new THREE.Vector3(0, 1, 0), -heading).add(box);
+      camera.position.copy(cam); camera.lookAt(mesh.position.x, 0.5, mesh.position.z);
+    },
+    end() {
+      scene.remove(crewRoot);
+      mesh.position.y = 0;
+      for (const pr of tyreProps) pr.wheel.visible = true;
+      // the rest of the 20 s pit loss happens off camera
+      while (race.player.pitTimer > 0) stepRace(race, STEP, { throttle: 0, brake: 0, steer: 0 });
+      flash('PIT EXIT');
+    },
+  }, 'PIT STOP', `${p.team.name} crew`);
+}
+
+/** Stand-in pit stop while the people models are still loading. */
+function startSimplePitScene() {
   const p = race.player, mesh = carMeshes[race.racers.indexOf(p)];
   const crew = makeCrew(p.color); crew.position.copy(mesh.position); crew.rotation.y = mesh.rotation.y; scene.add(crew);
   const wheels = mesh.userData.wheels as THREE.Mesh[], on = 1.6, off = on + p.stopTime;
@@ -482,6 +573,66 @@ function startPitScene() {
       flash('PIT EXIT');
     },
   }, 'PIT STOP', `${p.team.name} crew · new tyres`);
+}
+
+// --- people: loaded in the background; until then the old stand-ins are used ---
+let people: People | null = null;
+People.load().then(p => { people = p; if (race && !driverRig) seatDriver(); }).catch(e => console.warn('people models unavailable', e));
+
+/** The player's driver: seated in the car, hands on a working steering wheel. */
+let driverRig: { person: Person; wheel: THREE.Group; spin: THREE.Group; grips: THREE.Object3D[]; display: { ctx: CanvasRenderingContext2D; tex: THREE.CanvasTexture; t: number }; leds: THREE.Mesh[] } | null = null;
+function seatDriver() {
+  driverRig = null;
+  if (!people || !race) return;
+  const p = race.player, car = carMeshes[race.racers.indexOf(p)];
+  const person = people.make({ suit: p.team.livery[0], helmet: p.team.livery[1], gloves: 0x1a1a1a });
+  // F1 drivers lie back: tilt the seated pose back, then line the head up where the helmet sits
+  const seat = new THREE.Group(); seat.rotation.z = 0.5; seat.add(person.root);
+  person.root.rotation.y = Math.PI / 2; // model faces +z, car faces +x
+  car.add(seat);
+  person.play('Driving_Loop', 0); person.update(0.01);
+  for (const m of car.userData.helmet as THREE.Mesh[]) m.visible = false;
+  const local = (o: THREE.Object3D) => car.worldToLocal(o.getWorldPosition(new THREE.Vector3()));
+  car.updateMatrixWorld(true);
+  seat.position.add(new THREE.Vector3(0.3, 0.84, 0).sub(local(person.bone('Head'))));
+  car.updateMatrixWorld(true);
+  const hl = local(person.bone('hand_l')), hr = local(person.bone('hand_r'));
+  // steering wheel where the hands are: F1-style rectangle with grips, screen and rev lights
+  const wheel = new THREE.Group(), spin = new THREE.Group();
+  wheel.position.copy(hl).add(hr).multiplyScalar(0.5); wheel.position.x += 0.04; wheel.rotation.z = 0.35;
+  const half = Math.max(0.12, Math.abs(hl.z - hr.z) / 2);
+  const carbon = new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.45, metalness: 0.3 });
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, half * 2 - 0.02), carbon);
+  const grips = [-1, 1].map(s => { const g = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.024, 0.13, 10), rubber); g.position.z = s * half; return g; });
+  const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.04), new THREE.MeshBasicMaterial({ map: tex }));
+  screen.rotation.y = -Math.PI / 2; screen.position.set(-0.016, 0.01, 0);
+  const leds = Array.from({ length: 12 }, (_, k) => {
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.008, 0.008), new THREE.MeshBasicMaterial({ color: 0x222222 }));
+    l.position.set(-0.016, 0.055, (k - 5.5) * 0.011); return l;
+  });
+  spin.add(plate, ...grips, screen, ...leds); wheel.add(spin); car.add(wheel);
+  driverRig = { person, wheel, spin, grips: hl.z < hr.z ? grips : [...grips].reverse(), display: { ctx: c.getContext('2d')!, tex, t: 0 }, leds };
+}
+function updateDriver(dt: number) {
+  if (!driverRig) return;
+  const c = race.player.car, { person, spin, grips, display, leds } = driverRig;
+  person.update(dt);
+  spin.rotation.x = -c.steer * 1.2; // wheel turns about 70° each way at full lock
+  spin.updateWorldMatrix(true, true);
+  for (const [k, side] of (['l', 'r'] as const).entries())
+    reachWith(person.bone(`upperarm_${side}`), person.bone(`lowerarm_${side}`), person.bone(`hand_${side}`), grips[k].getWorldPosition(new THREE.Vector3()));
+  const { gear, rpm } = gearFor(c.speed), lit = Math.round((rpm - 4000) / 8500 * leds.length);
+  leds.forEach((l, k) => (l.material as THREE.MeshBasicMaterial).color.setHex(k >= lit ? 0x222222 : k < 4 ? 0x22c55e : k < 8 ? 0xef4444 : 0x60a5fa));
+  if ((display.t -= dt) <= 0) {
+    display.t = 0.1;
+    const g = display.ctx; g.fillStyle = '#000'; g.fillRect(0, 0, 128, 64);
+    g.fillStyle = '#facc15'; g.font = '900 44px system-ui'; g.textAlign = 'center'; g.fillText(gear === 0 ? 'R' : String(gear), 64, 44);
+    g.fillStyle = '#fff'; g.font = '700 13px system-ui'; g.fillText(`${Math.round(Math.abs(c.speed) * 3.6)}`, 64, 60);
+    display.tex.needsUpdate = true;
+  }
 }
 
 // --- loop ---
@@ -511,6 +662,7 @@ function frame(now: number) {
     for (const w of m.userData.wheels as THREE.Mesh[]) w.rotation.z -= car.speed * dt / 0.36;
     for (const f of m.userData.front as THREE.Group[]) f.rotation.y = -car.steer * maxSteerAngle(car.speed) * 2;
   });
+  updateDriver(dt);
 
   const c = race.player.car, fx = Math.cos(c.heading), fz = Math.sin(c.heading);
   if (race.player.pitTimer > 0 && !cut && screen === 'race') startPitScene();
@@ -519,8 +671,10 @@ function frame(now: number) {
     cut.update(cut.t);
     if (cut.t >= cut.length) endCut();
   } else if (camMode === 1) {
-    camera.position.set(c.x - fx * 0.3, 1.25, c.z - fz * 0.3);
-    camera.lookAt(c.x + fx * 30, 0.4, c.z + fz * 30);
+    // driver's eyes: just in front of the head bone, looking down the road over the wheel
+    const eye = driverRig ? driverRig.person.bone('Head').getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(c.x, 1.0, c.z);
+    camera.position.set(eye.x + fx * 0.12, eye.y + 0.07, eye.z + fz * 0.12);
+    camera.lookAt(c.x + fx * 30, 0.5, c.z + fz * 30);
   } else if (camMode === 2) {
     // TV camera: fixed trackside point ahead of the car, hops forward as it passes
     const tv = pointAt(track, Math.ceil(race.player.s / 250) * 250);
@@ -549,4 +703,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });

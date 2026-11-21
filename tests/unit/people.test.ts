@@ -14,6 +14,8 @@ describe('people', () => {
     expect(partForBone('foot_r')).toBe('boot');
     expect(partForBone('spine_02')).toBe('suit');
     expect(partForBone('upperarm_l')).toBe('suit');
+    expect(partForBone('thigh_r')).toBe('legs');
+    expect(partForBone('calf_l')).toBe('legs');
   });
 });
 

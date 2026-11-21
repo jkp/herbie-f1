@@ -5,18 +5,19 @@ import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import personUrl from './assets/person.glb?url';
 import animsUrl from './assets/anims.glb?url';
 
-export type Part = 'skin' | 'suit' | 'glove' | 'boot';
-const PART_CODE: Record<Part, number> = { skin: 0, suit: 1, glove: 2, boot: 3 };
+export type Part = 'skin' | 'suit' | 'legs' | 'glove' | 'boot';
+const PART_CODE: Record<Part, number> = { skin: 0, suit: 1, legs: 2, glove: 3, boot: 4 };
 
-/** What a body region wears, by its dominant bone: head bare, hands gloved, feet booted, the rest in the suit. */
+/** What a body region wears, by its dominant bone: head bare, hands gloved, feet booted, legs in trousers, the rest in the suit top. */
 export function partForBone(name: string): Part {
   if (/^(Head|neck_01)$/.test(name)) return 'skin';
   if (/^(hand|thumb|index|middle|ring|pinky)_/.test(name)) return 'glove';
   if (/^(foot|ball)_/.test(name)) return 'boot';
+  if (/^(thigh|calf)_/.test(name)) return 'legs';
   return 'suit';
 }
 
-export interface PersonStyle { suit: number; gloves?: number; boots?: number; helmet?: number | null }
+export interface PersonStyle { suit: number; legs?: number; gloves?: number; boots?: number; helmet?: number | null }
 export interface Person {
   root: THREE.Group;
   bone(name: string): THREE.Bone;
@@ -27,7 +28,7 @@ export interface Person {
 const HEIGHT = 1.78;
 
 export class People {
-  private constructor(private model: THREE.Group, private clips: THREE.AnimationClip[]) {}
+  private constructor(private model: THREE.Group, private clips: THREE.AnimationClip[], private inflate: number) {}
 
   static async load() {
     const loader = new GLTFLoader();
@@ -48,14 +49,18 @@ export class People {
     });
     const box = new THREE.Box3().setFromObject(model);
     model.scale.multiplyScalar(HEIGHT / (box.max.y - box.min.y));
-    return new People(model, anims.animations);
+    // clothes stand ~2.5 cm off the skin; work that out in the mesh's own units
+    model.updateMatrixWorld(true);
+    let meshScale = 1;
+    model.traverse(o => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshScale = o.getWorldScale(new THREE.Vector3()).x; });
+    return new People(model, anims.animations, 0.025 / meshScale);
   }
 
   make(style: PersonStyle): Person {
     const root = new THREE.Group(), body = cloneSkinned(this.model) as THREE.Group;
     root.add(body);
     const bones = new Map<string, THREE.Bone>();
-    const suit = new THREE.Color(style.suit), gloves = new THREE.Color(style.gloves ?? 0x16171a), boots = new THREE.Color(style.boots ?? 0x111111);
+    const suit = new THREE.Color(style.suit), legs = new THREE.Color(style.legs ?? style.suit), gloves = new THREE.Color(style.gloves ?? 0x16171a), boots = new THREE.Color(style.boots ?? 0x111111);
     body.traverse(o => {
       if ((o as THREE.Bone).isBone) bones.set(o.name, o as THREE.Bone);
       const m = o as THREE.SkinnedMesh;
@@ -64,11 +69,14 @@ export class People {
       const src = m.material as THREE.MeshStandardMaterial;
       if (!m.geometry.getAttribute('part')) return; // eyes, hair: keep as they are
       const mat = new THREE.MeshStandardMaterial({ map: src.map, roughness: 0.75 });
+      const inflate = this.inflate;
       mat.onBeforeCompile = sh => {
-        Object.assign(sh.uniforms, { uSuit: { value: suit }, uGloves: { value: gloves }, uBoots: { value: boots } });
-        sh.vertexShader = 'attribute float part;\nvarying float vPart;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPart = part;');
-        sh.fragmentShader = 'uniform vec3 uSuit, uGloves, uBoots;\nvarying float vPart;\n' + sh.fragmentShader.replace('#include <map_fragment>',
-          '#include <map_fragment>\nif (vPart > 0.5) diffuseColor.rgb = vPart < 1.5 ? uSuit : vPart < 2.5 ? uGloves : uBoots;');
+        Object.assign(sh.uniforms, { uSuit: { value: suit }, uLegs: { value: legs }, uGloves: { value: gloves }, uBoots: { value: boots }, uInflate: { value: inflate } });
+        // clothed parts are pushed out along the normal so they read as loose fabric rather than painted skin
+        sh.vertexShader = 'attribute float part;\nvarying float vPart;\nuniform float uInflate;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\nvPart = part;\nif (part > 0.5 && part < 2.5) transformed += objectNormal * uInflate;');
+        sh.fragmentShader = 'uniform vec3 uSuit, uLegs, uGloves, uBoots;\nvarying float vPart;\n' + sh.fragmentShader.replace('#include <map_fragment>',
+          '#include <map_fragment>\nif (vPart > 0.5) diffuseColor.rgb = vPart < 1.5 ? uSuit : vPart < 2.5 ? uLegs : vPart < 3.5 ? uGloves : uBoots;');
       };
       mat.customProgramCacheKey = () => 'person-suit';
       m.material = mat;

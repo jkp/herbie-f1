@@ -15,7 +15,9 @@ Open the printed URL: **Quick race** → track → car → driver → settings.
 
 **Career**: create a 17-year-old rookie (name, number, difficulty, race length), pick a first team and race an 11-round season. Points follow F1 rules; finish high enough in the championship and bigger teams offer you a seat for next season. Progress is saved in the browser.
 
-Cutscenes: race intro, pit stops, podium, contract signings (tap or Enter to skip).
+Cutscenes: race intro, pit stops (full crew, jacks, wheel guns, release light, live stationary time), podium, contract signings (tap or Enter to skip).
+
+Difficulty: Beginner and Amateur add auto-braking, steering help and extra grip; Semi-Pro auto-brakes; Pro and up give no help.
 
 | Key | Action |
 | --- | --- |
@@ -43,9 +45,15 @@ URL options: `?size=10&countdown=0` (`size` trims the field).
 | `src/race.ts` | Grid, countdown, laps, collisions, barriers, standings |
 | `src/scene.ts` | Track, scenery and car meshes |
 | `src/career.ts` | Career rules: calendar, points, championship, contract offers |
+| `src/people.ts` | Animated people: pit crew, podium, the player's driver |
+| `src/ik.ts` | Arm solver that keeps the driver's hands on the wheel |
 | `src/main.ts` | Menus, cutscenes, render loop, input, camera, HUD, engine sound |
 
 Simulation code has no three.js dependency, so it runs headless in tests.
+
+## Credits
+
+People and animations: Quaternius "Universal Base Characters" and "Universal Animation Library" (CC0), built into `src/assets/*.glb` by `scripts/build-people.mjs`.
 
 ## Tests
 
