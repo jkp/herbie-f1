@@ -45,6 +45,14 @@ describe('race', () => {
     for (let d = 1; d < DIFFICULTIES.length; d++) expect(verSkill(d)).toBeGreaterThan(verSkill(d - 1));
   });
 
+  it('seats a career rookie in place of a team\'s second driver', () => {
+    const race = createRace(track, { laps: 3, countdown: 0, player: 'HER', rookie: { name: 'Herbie Rocket', code: 'HER', number: 17, replaces: 'LAT' } });
+    expect(race.racers).toHaveLength(20);
+    expect(race.player).toMatchObject({ code: 'HER', name: 'Herbie Rocket', number: 17 });
+    expect(race.player.team.name).toBe('Williams');
+    expect(race.racers.some(r => r.code === 'LAT')).toBe(false);
+  });
+
   it('can run a smaller field', () => {
     expect(createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 4 }).racers).toHaveLength(4);
   });
