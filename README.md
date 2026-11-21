@@ -22,7 +22,7 @@ Open the printed URL, press **Enter**.
 | R | Put the car back on the track |
 | M | Mute engine |
 
-Gamepads work too (left stick, RT throttle, LT brake).
+Gamepads work too (left stick, RT throttle, LT brake). On an iPad or phone, on-screen ◀ ▶ / GAS / BRAKE buttons appear; tap to start.
 
 URL options: `?laps=5&opponents=8&countdown=0`.
 

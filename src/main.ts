@@ -44,15 +44,43 @@ function newRace() {
 
 // --- input ---
 const keys = new Set<string>();
+function startRace() {
+  if (screen === 'race') return;
+  newRace(); screen = 'race';
+  document.body.classList.remove('menu'); $('menu').classList.add('hidden'); $('results').classList.add('hidden');
+  audio.start();
+}
+$('menu').addEventListener('click', startRace);
+$('results').addEventListener('click', startRace);
 addEventListener('keydown', e => {
   keys.add(e.code);
-  if (e.code === 'Enter' && screen !== 'race') { newRace(); screen = 'race'; document.body.classList.remove('menu'); $('menu').classList.add('hidden'); $('results').classList.add('hidden'); audio.start(); }
+  if (e.code === 'Enter') startRace();
   if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
   if (e.code === 'KeyM') audio.toggle();
   if (e.code === 'KeyR' && screen === 'race') resetPlayer();
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
+
+// Touch: each finger maps to the control under it, so a thumb can slide between ◀ and ▶.
+const touch: Record<number, string> = {};
+const touchLayer = $('touch');
+function trackFinger(e: PointerEvent) {
+  const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-ctl]');
+  if (el) touch[e.pointerId] = el.dataset.ctl!; else delete touch[e.pointerId];
+  syncTouchButtons();
+}
+function liftFinger(e: PointerEvent) { delete touch[e.pointerId]; syncTouchButtons(); }
+function syncTouchButtons() {
+  const held = new Set(Object.values(touch));
+  touchLayer.querySelectorAll<HTMLElement>('[data-ctl]').forEach(b => b.classList.toggle('on', held.has(b.dataset.ctl!)));
+}
+touchLayer.addEventListener('pointerdown', e => { e.preventDefault(); trackFinger(e); });
+touchLayer.addEventListener('pointermove', e => { if (e.pointerId in touch || e.pointerType !== 'mouse') trackFinger(e); });
+touchLayer.addEventListener('pointerup', liftFinger);
+touchLayer.addEventListener('pointercancel', liftFinger);
+touchLayer.querySelector('[data-act=cam]')!.addEventListener('pointerdown', () => { camMode = (camMode + 1) % 3; });
+touchLayer.querySelector('[data-act=reset]')!.addEventListener('pointerdown', () => { if (screen === 'race') resetPlayer(); });
 
 function readControls(): Controls {
   const k = (...c: string[]) => c.some(x => keys.has(x)) ? 1 : 0;
@@ -61,6 +89,10 @@ function readControls(): Controls {
     brake: k('ArrowDown', 'KeyS', 'Space'),
     steer: k('ArrowRight', 'KeyD') - k('ArrowLeft', 'KeyA'),
   };
+  const held = new Set(Object.values(touch));
+  if (held.has('gas')) ctl.throttle = 1;
+  if (held.has('brake')) ctl.brake = 1;
+  if (held.size) ctl.steer += (held.has('right') ? 1 : 0) - (held.has('left') ? 1 : 0);
   const pad = navigator.getGamepads?.().find(p => p);
   if (pad) {
     const ax = pad.axes[0] ?? 0;
@@ -221,4 +253,4 @@ function frame(now: number) {
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; } } });
+Object.assign(window, { __game: { get race() { return race; }, touch } });
