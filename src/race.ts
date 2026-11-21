@@ -1,9 +1,11 @@
 import { newCar, stepCar, type CarState, type Controls } from './car';
-import { pointAt, project, type Track } from './track';
+import { pointAt, project, wrapAngle, type Track } from './track';
 import { aiControls, speedProfile } from './ai';
+import { DRIVERS, type Team } from './grid';
 
 export interface Racer {
-  name: string; color: number; isPlayer: boolean; skill: number; lane: number;
+  name: string; code: string; number: number; team: Team; color: number;
+  isPlayer: boolean; skill: number; lane: number;
   car: CarState;
   i: number; s: number; lateral: number; // where we are on the track
   total: number;      // distance covered since the start line (negative on the grid)
@@ -17,31 +19,30 @@ export interface Race {
   runoff: number;
 }
 
-const DRIVERS: [string, number][] = [
-  ['Verstappel', 0x1e3a8a], ['Hamiltune', 0xdc2626], ['Norrish', 0xf97316],
-  ['Leclairc', 0xb91c1c], ['Alonsoso', 0x065f46], ['Russellby', 0x14b8a6],
-  ['Piastrino', 0xfb923c], ['Sainzly', 0x2563eb], ['Gaslight', 0xec4899],
-];
 const CAR_RADIUS = 2.2;
 
-export function createRace(track: Track, o: { laps: number; opponents: number; countdown: number }): Race {
-  const racers: Racer[] = [];
-  const count = o.opponents + 1;
-  for (let k = 0; k < count; k++) {
-    const isPlayer = k === count - 1; // player starts at the back
-    const back = 10 + k * 9, side = k % 2 ? 3.5 : -3.5;
+// AI drive at this fraction of the speed profile times car pace and driver skill: beatable but quick.
+const AI_BASE = 0.95;
+
+/** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
+export function createRace(track: Track, o: { laps: number; countdown: number; player: string; size?: number }): Race {
+  const field = [...DRIVERS].sort((a, b) => b.team.pace * b.skill - a.team.pace * a.skill);
+  let entrants = field.slice(0, o.size ?? field.length);
+  if (!entrants.some(d => d.code === o.player)) entrants = [...entrants.slice(0, -1), field.find(d => d.code === o.player)!];
+  const racers: Racer[] = entrants.map((d, k) => {
+    const back = 10 + k * 8, side = k % 2 ? 3.5 : -3.5; // staggered two-by-two grid
     const p = pointAt(track, -back);
-    const car = newCar(p.x - Math.sin(p.heading) * side, p.z + Math.cos(p.heading) * side, p.heading);
-    const [name, color] = isPlayer ? ['You', 0xfacc15] as [string, number] : DRIVERS[k % DRIVERS.length];
-    racers.push({
-      name, color, isPlayer, skill: 0.9 + 0.07 * (1 - k / Math.max(1, count - 1)), lane: side * 0.4,
+    const car = newCar(p.x - Math.sin(p.heading) * side, p.z + Math.cos(p.heading) * side, p.heading, d.team.pace);
+    return {
+      name: d.name, code: d.code, number: d.number, team: d.team, color: d.team.color,
+      isPlayer: d.code === o.player, skill: AI_BASE * d.team.pace * d.skill, lane: side * 0.4,
       car, i: p.i, s: track.length - back, lateral: side, total: -back,
       completed: 0, lapStart: 0, lastLap: 0, bestLap: 0, finished: false, finishTime: 0,
-    });
-  }
+    };
+  });
   return {
-    track, profile: speedProfile(track), racers, player: racers[count - 1],
-    laps: o.laps, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: 20,
+    track, profile: speedProfile(track), racers, player: racers.find(r => r.isPlayer)!,
+    laps: o.laps, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
   };
 }
 
@@ -78,10 +79,12 @@ export function stepRace(race: Race, dt: number, player: Controls) {
     const pr = project(track, r.car.x, r.car.z, r.i);
     const limit = edge + race.runoff;
     if (Math.abs(pr.lateral) > limit) {
-      // hit the barrier: put the car back inside it and kill most of its speed
+      // hit the barrier: put the car back inside it and scrape along it, losing speed the harder the impact
       const p = pointAt(track, pr.s), side = Math.sign(pr.lateral) * limit;
       r.car.x = p.x - Math.sin(p.heading) * side; r.car.z = p.z + Math.cos(p.heading) * side;
-      r.car.speed *= 0.3; pr.lateral = side;
+      const along = Math.cos(wrapAngle(r.car.heading - p.heading));
+      r.car.heading = along >= 0 ? p.heading : p.heading + Math.PI;
+      r.car.speed *= Math.abs(along) * 0.7; pr.lateral = side;
     }
     let ds = pr.s - r.s;
     if (ds > track.length / 2) ds -= track.length;

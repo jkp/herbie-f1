@@ -28,7 +28,17 @@ export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
   const delta = Math.atan(3.6 * 2 * Math.sin(err) / ld);
   const steer = Math.max(-1, Math.min(1, delta / maxSteerAngle(c.speed)));
 
-  const target = race.profile[r.i] * skill;
+  let target = race.profile[r.i] * skill;
+  // traffic: follow a slower car in our lane, and pull to its other side to pass
+  const room = race.track.width / 2 - 2;
+  for (const o of race.racers) {
+    const gap = o.total - r.total;
+    if (o === r || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
+    if (o.car.speed < c.speed) {
+      target = Math.min(target, o.car.speed - 1 + gap * 0.3);
+      r.lane = o.lateral > 0 ? -room : room;
+    }
+  }
   if (c.speed < target - 0.5) return { throttle: 1, brake: 0, steer };
   if (c.speed > target + 1) return { throttle: 0, brake: Math.min(1, (c.speed - target) / 4), steer };
   return { throttle: 0.4, brake: 0, steer };

@@ -92,6 +92,17 @@ describe('race', () => {
     expect(Math.abs(p.lateral)).toBeLessThanOrEqual(track.width / 2 + track.runoff + 0.01);
   });
 
+  it('scrapes along the barrier on a glancing hit instead of sticking to it', () => {
+    const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player, pt = pointAt(track, 300), off = track.width / 2 + track.runoff + 0.5;
+    p.i = pt.i; p.s = 300;
+    p.car.x = pt.x - Math.sin(pt.heading) * off; p.car.z = pt.z + Math.cos(pt.heading) * off;
+    p.car.heading = pt.heading + 0.2; p.car.speed = 50; // angled into the right-hand wall
+    stepRace(race, 1 / 120, idle);
+    expect(p.car.speed).toBeGreaterThan(30);
+    expect(Math.abs(p.car.heading - pt.heading)).toBeLessThan(0.05);
+  });
+
   it('pushes overlapping cars apart', () => {
     const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 2 });
     const [a, b] = race.racers;

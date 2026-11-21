@@ -1,12 +1,13 @@
 // Regenerates src/circuits.ts from bacinger/f1-circuits (MIT). Run: node scripts/import-circuits.mjs
-// Add a circuit by adding a row here; `start` rotates the point list so index 0 sits on the start/finish line.
+// Add a circuit by adding a row here. `start`: metres along the (clockwise) data where the real start/finish line is,
+// for datasets that don't begin on it. Check with the corner list: the first corner should come up at the right distance.
 import { writeFileSync } from 'node:fs';
 
 const CIRCUITS = [
   { id: 'silverstone', file: 'gb-1948', name: 'Silverstone', gp: 'British Grand Prix', country: 'Great Britain', width: 15, runoff: 20, start: 0 },
   { id: 'spa', file: 'be-1925', name: 'Spa-Francorchamps', gp: 'Belgian Grand Prix', country: 'Belgium', width: 14, runoff: 18, start: 0 },
   { id: 'monza', file: 'it-1922', name: 'Monza', gp: 'Italian Grand Prix', country: 'Italy', width: 14, runoff: 18, start: 0 },
-  { id: 'monaco', file: 'mc-1929', name: 'Monaco', gp: 'Monaco Grand Prix', country: 'Monaco', width: 10, runoff: 3, start: 0 },
+  { id: 'monaco', file: 'mc-1929', name: 'Monaco', gp: 'Monaco Grand Prix', country: 'Monaco', width: 10, runoff: 3, start: 2300 },
   { id: 'redbullring', file: 'at-1969', name: 'Red Bull Ring', gp: 'Austrian Grand Prix', country: 'Austria', width: 14, runoff: 18, start: 0 },
 ];
 
@@ -17,13 +18,18 @@ for (const c of CIRCUITS) {
   const f = (await res.json()).features[0];
   let ll = f.geometry.coordinates;
   if (ll[0][0] === ll.at(-1)[0] && ll[0][1] === ll.at(-1)[1]) ll = ll.slice(0, -1);
-  ll = [...ll.slice(c.start), ...ll.slice(0, c.start)];
   const [lon0, lat0] = ll[0], k = Math.cos(lat0 * Math.PI / 180) * 111320;
   // metres: x = east, z = south (so the minimap is north-up)
   let pts = ll.map(([lon, lat]) => [Math.round((lon - lon0) * k * 10) / 10, Math.round(-(lat - lat0) * 110540 * 10) / 10]);
   let area = 0;
   for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; area += a[0] * b[1] - b[0] * a[1]; }
   if (area < 0) pts = [pts[0], ...pts.slice(1).reverse()]; // every circuit here races clockwise
+  let along = 0, k0 = 0;
+  while (k0 < pts.length - 1 && along < c.start) { along += Math.hypot(pts[k0 + 1][0] - pts[k0][0], pts[k0 + 1][1] - pts[k0][1]); k0++; }
+  // rotate to the start line and re-centre so the line sits at the origin
+  pts = [...pts.slice(k0), ...pts.slice(0, k0)];
+  const [sx, sz] = pts[0];
+  pts = pts.map(([x, z]) => [Math.round((x - sx) * 10) / 10, Math.round((z - sz) * 10) / 10]);
   const { id, name, gp, country, width, runoff } = c;
   out.push({ id, name, gp, country, width, runoff, officialLength: f.properties.length, points: pts });
 }

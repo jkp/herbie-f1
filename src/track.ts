@@ -9,6 +9,7 @@ export interface TrackDef {
 export interface Track {
   name: string;
   width: number;
+  runoff: number; // grass between the kerb and the barrier
   n: number;
   xs: Float64Array;
   zs: Float64Array;
@@ -65,7 +66,7 @@ export function buildTrack(def: TrackDef, step = 2): Track {
     for (let j = -w; j <= w; j++) sum += raw[(i + j + n) % n];
     curvature[i] = sum / (2 * w + 1);
   }
-  return { name: def.name, width: def.width, n, xs, zs, cum, length, curvature };
+  return { name: def.name, width: def.width, runoff: def.runoff, n, xs, zs, cum, length, curvature };
 }
 
 export const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
