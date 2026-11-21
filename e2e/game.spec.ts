@@ -96,3 +96,8 @@ test('the intro cutscene names the Grand Prix and holds the start until it ends'
   await skipCutscene(page);
   await expect.poll(() => page.evaluate(() => (window as any).__game.race.phase)).toBe('racing');
 });
+
+test('the circuit has grandstands full of fans', async ({ page }) => {
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().fans)).toBeGreaterThan(2000);
+});
