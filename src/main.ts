@@ -3,7 +3,8 @@ import { buildTrack, pointAt, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
-import { makeCrew } from './scene';
+import { makeCrew, makePodium } from './scene';
+import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar } from './scene';
 
@@ -49,7 +50,7 @@ function newRace() {
   clearCars();
   race = createRace(track, { ...OPTS, player: driver, difficulty, laps });
   carMeshes = race.racers.map(r => { const m = makeCar(r.color); scene.add(m); return m; });
-  lastPos = race.racers.length;
+  lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
 }
 
@@ -67,6 +68,7 @@ function startRace() {
   newRace(); screen = 'race';
   document.body.classList.remove('menu'); $('menu').classList.add('hidden'); $('results').classList.add('hidden');
   audio.start();
+  playIntro();
 }
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const esc = (t: string) => t.replace(/[&<>"]/g, ch => `&#${ch.charCodeAt(0)};`);
@@ -277,7 +279,7 @@ function showResults() {
 }
 
 // --- cutscenes: letterboxed camera moves with a caption; tap or Enter skips ---
-interface Cut { t: number; length: number; update: (t: number) => void; end: () => void }
+interface Cut { t: number; length: number; pause?: boolean; update: (t: number) => void; end: () => void } // pause: hold the race
 let cut: Cut | null = null;
 function playCut(c: Omit<Cut, 't'>, title: string, sub = '') {
   cut = { ...c, t: 0 };
@@ -292,6 +294,54 @@ function endCut() {
 }
 $('cutscene').addEventListener('click', endCut);
 addEventListener('keydown', e => { if (cut && (e.code === 'Enter' || e.code === 'Space')) endCut(); });
+
+function playIntro() {
+  const grid = race.racers, me = carMeshes[grid.indexOf(race.player)].position;
+  const front = pointAt(track, 25), back = pointAt(track, -30 - grid.length * 8);
+  playCut({
+    length: 5.5, pause: true,
+    update(t) {
+      // sweep down the grid from the front row, then settle behind the player
+      const k = Math.min(1, t / 4.5), e = k * k * (3 - 2 * k);
+      const p = pointAt(track, 25 + (back.i === front.i ? 0 : (-30 - grid.length * 8 - 25) * e));
+      const off = 14 - 8 * e;
+      camera.position.set(p.x - Math.sin(p.heading) * off, 4 + 3 * (1 - e), p.z + Math.cos(p.heading) * off);
+      camera.lookAt(me.x * e + p.x * (1 - e), 0.5, me.z * e + p.z * (1 - e));
+    },
+    end() { camPos.set(0, 0, 0); },
+  }, def.gp, introSub || `${def.name} · ${race.laps} laps`);
+}
+let introSub = '';
+
+function playPodium() {
+  const top = standings(race).slice(0, 3), mine = top.indexOf(race.player);
+  const box = pitBox(track, 4, race.pitSide), side = race.pitSide;
+  const podium = makePodium(top.map(r => r.color));
+  // out beyond the garages, facing the track
+  podium.position.set(box.x - Math.sin(box.heading) * side * 40, 0, box.z + Math.cos(box.heading) * side * 40);
+  podium.rotation.y = -box.heading + side * Math.PI / 2;
+  scene.add(podium);
+  const confetti = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.15, 0.25), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), mine >= 0 ? 400 : 0);
+  const bits = Array.from({ length: confetti.count }, (_, k) => ({ x: Math.random() * 12 - 6, y: Math.random() * 10, z: Math.random() * 12 - 6, s: 0.6 + Math.random(), k }));
+  bits.forEach(b => confetti.setColorAt(b.k, new THREE.Color().setHSL(Math.random(), 0.9, 0.6)));
+  confetti.position.copy(podium.position); scene.add(confetti);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  playCut({
+    length: 7,
+    update(t) {
+      const a = podium.rotation.y + Math.sin(t * 0.3) * 0.5;
+      camera.position.set(podium.position.x + Math.cos(-a) * 11, 3.2, podium.position.z + Math.sin(-a) * 11);
+      camera.lookAt(podium.position.x, 2, podium.position.z);
+      for (const b of bits) {
+        const y = ((b.y - t * b.s) % 10 + 10) % 10;
+        q.setFromEuler(new THREE.Euler(t * 3 * b.s, b.k, t * 2));
+        confetti.setMatrixAt(b.k, m.compose(new THREE.Vector3(b.x + Math.sin(t + b.k) * 0.3, y, b.z), q, new THREE.Vector3(1, 1, 1)));
+      }
+      confetti.instanceMatrix.needsUpdate = true;
+    },
+    end() { scene.remove(podium, confetti); showResults(); },
+  }, mine >= 0 ? `YOU FINISHED P${mine + 1}!` : 'PODIUM', top.map((r, k) => `${k + 1} ${r.code}`).join('  ·  '));
+}
 
 function startPitScene() {
   const p = race.player, mesh = carMeshes[race.racers.indexOf(p)];
@@ -334,8 +384,8 @@ function frame(now: number) {
 
   const ctl = screen === 'race' && !cut ? readControls() : { throttle: 0, brake: 0, steer: 0 };
   acc += dt;
-  while (acc >= STEP) { stepRace(race, STEP, ctl); acc -= STEP; }
-  if (screen === 'race' && race.phase === 'finished') { screen = 'results'; showResults(); }
+  while (acc >= STEP) { if (!cut?.pause) stepRace(race, STEP, ctl); acc -= STEP; }
+  if (screen === 'race' && race.phase === 'finished' && !cut) { screen = 'results'; playPodium(); }
 
   race.racers.forEach((r, k) => {
     const m = carMeshes[k], { car } = r;

@@ -48,7 +48,7 @@ test('results screen offers race again and main menu', async ({ page }) => {
   // jump the player to just short of the line on the final lap
   await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * r.laps - 0.001; });
   await page.keyboard.down('ArrowUp');
-  await expect(page.locator('#cutscene')).toContainText('PODIUM');
+  await expect(page.locator('#cutscene')).toContainText(/PODIUM|YOU FINISHED P/);
   await page.keyboard.up('ArrowUp');
   await skipCutscene(page);
   await expect(page.getByRole('heading', { name: 'CHEQUERED FLAG' })).toBeVisible();

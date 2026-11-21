@@ -128,6 +128,22 @@ function mulberry32(a: number) {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
+/** Podium: [winner, second, third] team colours; drivers stand on the steps. Front faces +x. */
+export function makePodium(colors: number[]) {
+  const g = new THREE.Group(), stone = new THREE.MeshLambertMaterial({ color: 0xf3f4f6 });
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6, 12), new THREE.MeshLambertMaterial({ color: 0xe10600 }));
+  back.position.set(-2.5, 3, 0); g.add(back);
+  [[0, 1.6], [3.1, 1.1], [-3.1, 0.7]].forEach(([z, h], k) => {
+    const step = new THREE.Mesh(new THREE.BoxGeometry(3, h, 3), stone); step.position.set(0, h / 2, z);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.3, 10), new THREE.MeshLambertMaterial({ color: colors[k] }));
+    body.position.set(0, h + 0.65, z);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), new THREE.MeshLambertMaterial({ color: 0xfafafa }));
+    head.position.set(0, h + 1.5, z);
+    g.add(step, body, head);
+  });
+  return g;
+}
+
 /** Pit crew around a car parked at the origin, nose along +x. */
 export function makeCrew(color: number) {
   const crew = new THREE.Group(), suit = new THREE.MeshLambertMaterial({ color }), helmet = new THREE.MeshLambertMaterial({ color: 0x111111 });
