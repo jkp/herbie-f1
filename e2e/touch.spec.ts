@@ -2,9 +2,11 @@ import { test, expect, type Page } from '@playwright/test';
 
 test.use({ viewport: { width: 1133, height: 744 }, hasTouch: true, isMobile: true });
 
+const sessions = new Map<Page, import('@playwright/test').CDPSession>();
 // Real multi-touch via CDP so the game sees genuine touch pointers, like an iPad.
 async function touch(page: Page, points: { x: number; y: number; id: number }[]) {
-  const cdp = await page.context().newCDPSession(page);
+  const cdp = sessions.get(page) ?? await page.context().newCDPSession(page);
+  sessions.set(page, cdp);
   await cdp.send('Input.dispatchTouchEvent', { type: points.length ? 'touchStart' : 'touchEnd', touchPoints: points });
 }
 const centre = async (page: Page, sel: string) => {
@@ -23,12 +25,14 @@ test('race on an iPad with on-screen controls', async ({ page }) => {
 
   const heading0 = await page.evaluate(() => (window as any).__game.race.player.car.heading);
   const gas = await centre(page, '[data-ctl=gas]'), right = await centre(page, '[data-ctl=right]');
-  await touch(page, [{ ...gas, id: 1 }, { ...right, id: 2 }]);
-  await page.waitForTimeout(2500);
-  await touch(page, []);
-
+  await touch(page, [{ ...gas, id: 1 }]);
+  await page.waitForTimeout(2000);
   const kmh = Number(await page.locator('#speed').textContent());
   expect(kmh).toBeGreaterThan(60);
+
+  await touch(page, [{ ...gas, id: 1 }, { ...right, id: 2 }]); // second finger steers while the first keeps the gas on
+  await page.waitForTimeout(600);
+  await touch(page, []);
   const heading1 = await page.evaluate(() => (window as any).__game.race.player.car.heading);
   expect(heading1).toBeGreaterThan(heading0 + 0.2); // steered right
 

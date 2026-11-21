@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Herbie F1</title>
   <link rel="icon" href="/assets/icon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -51,6 +53,22 @@
     #msg { position: fixed; top: 38%; left: 50%; transform: translateX(-50%); font-size: 54px; font-weight: 900; color: #fff;
       text-shadow: 0 4px 24px rgba(0,0,0,.6); pointer-events: none; opacity: 0; transition: opacity .3s; }
     body.menu .panel, body.menu #lights { display: none !important; }
+    #touch { position: fixed; inset: 0; display: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    @media (pointer: coarse) {
+      body:not(.menu) #touch { display: block; }
+      #map { bottom: auto; top: 128px; width: 160px; height: 160px; }
+    }
+    #touch button { position: absolute; border: 2px solid rgba(255,255,255,.35); background: rgba(12,14,20,.45); color: #fff;
+      font: 700 18px 'Titillium Web', system-ui, sans-serif; letter-spacing: .06em; border-radius: 18px; padding: 0; }
+    #touch button.on { background: rgba(255,255,255,.35); }
+    #touch [data-ctl=left], #touch [data-ctl=right] { width: 118px; height: 118px; bottom: calc(24px + env(safe-area-inset-bottom)); font-size: 40px; }
+    #touch [data-ctl=left] { left: calc(24px + env(safe-area-inset-left)); }
+    #touch [data-ctl=right] { left: calc(156px + env(safe-area-inset-left)); }
+    #touch [data-ctl=gas] { width: 118px; height: 170px; right: calc(24px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); border-color: #22c55e; }
+    #touch [data-ctl=brake] { width: 118px; height: 118px; right: calc(156px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); border-color: var(--red); }
+    #touch [data-act] { top: 16px; width: 86px; height: 44px; font-size: 14px; border-radius: 10px; }
+    #touch [data-act=cam] { left: calc(50% - 92px); }
+    #touch [data-act=reset] { left: calc(50% + 6px); }
     .hidden { display: none !important; }
     @media (max-width: 700px) { #tower { display: none; } #map { display: none; } }
   </style>
@@ -72,6 +90,14 @@
     <div><div class="k">Gear</div><div id="gear">N</div></div>
   </div>
   <canvas id="map" class="panel" width="220" height="220"></canvas>
+  <div id="touch">
+    <button data-ctl="left" aria-label="Steer left">◀</button>
+    <button data-ctl="right" aria-label="Steer right">▶</button>
+    <button data-ctl="brake">BRAKE</button>
+    <button data-ctl="gas">GAS</button>
+    <button data-act="cam">CAMERA</button>
+    <button data-act="reset">RESET</button>
+  </div>
   <div id="lights"><i></i><i></i><i></i><i></i><i></i></div>
   <div id="msg"></div>
 
@@ -86,14 +112,14 @@
       <b>R</b><span>Reset car to track</span>
       <b>M</b><span>Mute engine</span>
     </div>
-    <div class="go">Press ENTER to start</div>
+    <div class="go">Press ENTER or tap to start</div>
   </div>
 
   <div id="results" class="overlay hidden">
     <h1>CHEQUERED <span>FLAG</span></h1>
     <h2 id="verdict"></h2>
     <table><tbody id="resrows"></tbody></table>
-    <div class="go">Press ENTER to race again</div>
+    <div class="go">Press ENTER or tap to race again</div>
   </div>
 
   <script type="module" src="/src/main.ts"></script>
