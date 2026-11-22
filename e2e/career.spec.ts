@@ -19,6 +19,11 @@ test('start a career as a 17-year-old, race round 1, and pick it up again after 
   await expect(page.locator('#career-error')).toContainText('Lewis Hamilton');
   await page.getByLabel('Race number').fill('17');
   await page.getByRole('button', { name: '3 laps' }).click();
+  // what the driver looks like
+  await page.getByRole('button', { name: 'Curly' }).click();
+  await page.getByRole('button', { name: 'Skin tone 4' }).click();
+  await page.getByRole('button', { name: 'Ginger' }).click();
+  await expect(page.locator('#c-avatar')).toBeVisible();
   await page.getByRole('button', { name: 'Next' }).click();
 
   await expect(page.getByRole('heading', { name: 'Choose your first team' })).toBeVisible();
@@ -44,6 +49,8 @@ test('start a career as a 17-year-old, race round 1, and pick it up again after 
   await expect(hub).toContainText('Round 2 of 11');
   await expect(hub).toContainText('Spanish Grand Prix');
   await expect(page.locator('#standings')).toContainText('HER');
+
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('herbie-f1-career')!).look)).toEqual({ skin: 3, hair: 2, hairColor: 3 });
 
   await page.reload();
   await page.getByRole('button', { name: 'Career' }).click();
