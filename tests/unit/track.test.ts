@@ -65,3 +65,30 @@ describe.each(CIRCUITS)('$name', def => {
     expect(maxK).toBeGreaterThan(1 / 120);
   });
 });
+
+describe.each(CIRCUITS)('run-off room at $name', def => {
+  const t = buildTrack(def), w = t.width / 2;
+  // other parts of the lap: further round the lap than they are away
+  const far = (i: number, j: number, d: number) => { const ds = Math.abs(t.cum[i] - t.cum[j]); return Math.min(ds, t.length - ds) > 1.2 * d + 5; };
+
+  it('stops the run-off and barriers before they reach another part of the lap, so no wall or apron crosses a road', () => {
+    for (let i = 0; i < t.n; i += 3) {
+      const a = (i - 1 + t.n) % t.n, b = (i + 1) % t.n, h = Math.atan2(t.zs[b] - t.zs[a], t.xs[b] - t.xs[a]);
+      for (const [k, side] of [[0, -1], [1, 1]] as const) {
+        const r = t.room[k][i];
+        expect(r).toBeGreaterThan(w);
+        expect(r).toBeLessThanOrEqual(w + t.runoff + 1e-6);
+        const x = t.xs[i] - Math.sin(h) * side * r, z = t.zs[i] + Math.cos(h) * side * r;
+        for (let j = 0; j < t.n; j += 2) {
+          const d = Math.hypot(t.xs[j] - x, t.zs[j] - z);
+          if (d < w && far(i, j, Math.hypot(t.xs[j] - t.xs[i], t.zs[j] - t.zs[i]))) throw new Error(`${def.id}: run-off at ${t.cum[i].toFixed(0)} m (${side > 0 ? 'right' : 'left'}) lands on the road at ${t.cum[j].toFixed(0)} m`);
+        }
+      }
+    }
+  });
+
+  it('keeps the full run-off where nothing else is near', () => {
+    const full = [0, 1].map(k => t.room[k].filter(r => r > w + t.runoff - 1e-6).length / t.n);
+    expect(Math.min(...full)).toBeGreaterThan(0.6);
+  });
+});
