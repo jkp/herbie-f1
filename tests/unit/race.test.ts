@@ -363,7 +363,7 @@ describe('crashes', () => {
   it('a car out of the race brings out the safety car: the field queues behind it, then it comes in', () => {
     const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 3, difficulty: 3 });
     const [a, b, c] = race.racers;
-    put(race, a, 1500, 0, 60); put(race, c, 800, 0, 20); put(race, b, 800 - 4.2, 0.4, 70);
+    put(race, a, 1500, 0, 60); put(race, c, 800, 0, 5); put(race, b, 800 - 4.2, 0.4, 85);
     stepRace(race, 1 / 120, go);
     const out = race.racers.find(r => r.out)!;
     expect(out).toBeDefined();

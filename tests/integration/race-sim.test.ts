@@ -6,14 +6,14 @@ import { aiControls } from '../../src/ai';
 
 // The whole 20-car field, player included, driven by the AI.
 describe.each(CIRCUITS)('full race at $name', def => {
-  it('every car finishes 2 laps at a sane pace and stays on the circuit', () => {
+  it('every car finishes 2 laps at a sane pace and stays on the circuit, unless spun off or in the pits for repairs', () => {
     const track = buildTrack(def);
     const race = createRace(track, { laps: 2, countdown: 0, player: 'VER' });
     const dt = 1 / 120;
     let offTrack = 0, samples = 0;
     while (race.racers.some(r => !r.finished) && race.time < 600) {
       stepRace(race, dt, aiControls(race.player, race));
-      for (const r of race.racers) { samples++; if (Math.abs(r.lateral) > track.width / 2 + 1) offTrack++; }
+      for (const r of race.racers) if (!r.car.spin && !r.inPitLane) { samples++; if (Math.abs(r.lateral) > track.width / 2 + 1) offTrack++; }
     }
     for (const r of race.racers) {
       expect(r.finished, r.code).toBe(true);

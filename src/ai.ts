@@ -26,6 +26,7 @@ export function pursuitSteer(r: Racer, race: Race, laneAt: number | ((s: number)
   const tx = ahead.x - Math.sin(ahead.heading) * lane, tz = ahead.z + Math.cos(ahead.heading) * lane;
   const err = wrapAngle(Math.atan2(tz - c.z, tx - c.x) - c.heading);
   const ld = Math.hypot(tx - c.x, tz - c.z);
+  if (Math.abs(err) > Math.PI / 2) return Math.sign(err); // facing the wrong way (after a spin): full lock to turn round
   const delta = Math.atan(3.6 * 2 * Math.sin(err) / ld);
   return Math.max(-1, Math.min(1, delta / maxSteerAngle(c.speed)));
 }
@@ -62,11 +63,12 @@ export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
     target = Math.min(target, Math.sqrt(PIT.limit ** 2 + 2 * 8 * Math.max(0, PIT.b - rel)) - 0.5);
     if (r.boxRequested) target = Math.min(target, Math.sqrt(2 * 6 * Math.max(0, box - rel)) + 1.5);
   }
-  // traffic: follow a slower car in our lane, and pull to its other side to pass
-  const room = race.track.width / 2 - 2;
+  // traffic: follow a slower car in our lane, and pull to its other side to pass; a spinning car is seen from further off
+  const room = race.track.width / 2 - 2, L = race.track.length;
   for (const o of race.racers) {
-    const gap = o.total - r.total;
-    if (o === r || o.pitTimer > 0 || o.inPitLane !== r.inPitLane || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
+    const gap = ((o.s - r.s) % L + L) % L, spun = o.car.spin !== 0;
+    if (o === r || o.pitTimer > 0 || o.out && !spun || o.inPitLane !== r.inPitLane || gap <= 0
+      || gap > (spun ? 30 + v * 1.2 : 8 + v * 0.4) || Math.abs(o.lateral - r.lateral) > (spun ? 4.5 : 2.6)) continue;
     if (o.car.speed < c.speed) {
       target = Math.min(target, o.car.speed - 1 + gap * 0.3);
       r.lane = o.lateral > 0 ? -room : room;
