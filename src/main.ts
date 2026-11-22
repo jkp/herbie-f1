@@ -93,7 +93,7 @@ function applyConditions(time: number, wx: number) {
   sun.color.setHex(sunCol);
   sun.intensity = (night ? 1.5 : T.sun < 8 ? 1.7 : 2.2) * (1 - overcast * 0.7);
   sun.shadow.intensity = 1 - overcast * 0.75;
-  hemi.intensity = night ? 0.12 : 0.35 + overcast * 0.45;
+  hemi.intensity = night ? 0.3 : 0.35 + overcast * 0.45; // at night, spill from the floodlights so the cockpit isn't black
   hemi.color.setHex(night ? 0x2a3550 : overcast ? 0xb8c0c8 : T.sun < 8 ? 0xffc8a8 : 0xdbeafe);
   // sky: the physical sky by day, a plain dark or grey dome otherwise
   const u = sky.material.uniforms, eu = envSky.material.uniforms;
