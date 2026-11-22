@@ -128,6 +128,18 @@ function dressWorld() {
   let flood = world.getObjectByName('floodlights');
   if (night && !flood) { flood = buildFloodlights(track); world.add(flood); }
   if (flood) flood.visible = night;
+  // lit windows in the city at night (the facade texture has one window per 64-px tile, at 14..50 × 14..48)
+  const walls = world.getObjectByName('buildings') as THREE.Mesh | undefined;
+  if (walls) {
+    const m = walls.material as THREE.MeshStandardMaterial;
+    if (night && !m.emissiveMap) {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const g = c.getContext('2d')!; g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64); g.fillStyle = '#fff'; g.fillRect(14, 22, 36, 26);
+      m.emissiveMap = new THREE.CanvasTexture(c); m.emissiveMap.wrapS = m.emissiveMap.wrapT = THREE.RepeatWrapping; m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+      m.emissive.setHex(0xffc477); m.needsUpdate = true;
+    }
+    m.emissiveIntensity = night ? 0.9 : 0;
+  }
   world.traverse(o => {
     const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
     if (m?.name !== 'asphalt') return;
