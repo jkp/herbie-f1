@@ -4,7 +4,10 @@ import { buildTrack, project } from '../../src/track';
 import { CIRCUITS } from '../../src/circuits';
 
 // Real surroundings from OpenStreetMap, imported by scripts/import-buildings.mjs.
-const load = (id: string) => JSON.parse(readFileSync(`src/buildings/${id}.json`, 'utf8')) as { buildings: number[][]; tunnels: number[][] };
+const load = (id: string) => JSON.parse(readFileSync(`src/buildings/${id}.json`, 'utf8')) as { buildings: number[][]; tunnels: number[][]; forests: number[][][] };
+/** Area inside a forest: rings are even-odd, so clearings cut holes. */
+const ringArea = (r: number[]) => { let a = 0; for (let k = 0; k < r.length; k += 2) { const j = (k + 2) % r.length; a += r[k] * r[j + 1] - r[j] * r[k + 1]; } return Math.abs(a) / 2; };
+const forestArea = (f: number[][][]) => f.reduce((sum, rings) => sum + ringArea(rings[0]) - rings.slice(1).reduce((h, r) => h + ringArea(r), 0), 0);
 
 describe('Monaco', () => {
   const data = load('monaco'), t = buildTrack(CIRCUITS.find(c => c.id === 'monaco')!);
@@ -23,6 +26,16 @@ describe('Monaco', () => {
     expect(s1).toBeLessThan(t.length);
   });
 });
+
+describe('Spa-Francorchamps', () => {
+  it('is carved through the Ardennes forest', () => {
+    const data = load('spa');
+    expect(forestArea(data.forests)).toBeGreaterThan(3e6); // m²
+    for (const f of data.forests) for (const ring of f) expect(ring.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+it('Monza has its royal park', () => expect(forestArea(load('monza').forests)).toBeGreaterThan(5e5));
 
 describe.each(CIRCUITS)('$name surroundings', def => {
   const data = load(def.id), t = buildTrack(def);

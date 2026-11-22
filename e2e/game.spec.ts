@@ -183,3 +183,15 @@ test('the grid races the Blender-built car model once it has loaded', async ({ p
   expect(Number(await page.locator('#speed').textContent())).toBeGreaterThan(50);
   expect(errors).toEqual([]);
 });
+
+test('Spa is real 3D: the car climbs out of Eau Rouge up Raidillon, through dense forest', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Spa', team: 'Ferrari', driver: 'Charles Leclerc', laps: 3 });
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().forest), { timeout: 15_000 }).toBeGreaterThan(15000);
+  await page.evaluate(() => (window as any).__game.place(900, 0)); // the dip at Eau Rouge
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carY)).toBeLessThan(-15);
+  const dip = await page.evaluate(() => (window as any).__game.stats().carY);
+  await page.keyboard.down('ArrowUp');
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carY), { timeout: 10_000 }).toBeGreaterThan(dip + 10); // straight-line: it meets the barrier at the top of Eau Rouge
+  await page.keyboard.up('ArrowUp');
+});
