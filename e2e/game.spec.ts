@@ -195,3 +195,25 @@ test('Spa is real 3D: the car climbs out of Eau Rouge up Raidillon, through dens
   await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carY), { timeout: 10_000 }).toBeGreaterThan(dip + 10); // straight-line: it meets the barrier at the top of Eau Rouge
   await page.keyboard.up('ArrowUp');
 });
+
+test('Spa\'s woods are Blender-built spruce and beech: detailed near the camera, cheap in the distance', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()); });
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Spa', team: 'Ferrari', driver: 'Charles Leclerc', laps: 3 });
+  await expect.poll(() => page.evaluate(() => !!(window as any).__game.three.scene.getObjectByName('trees')?.userData.ready), { timeout: 30_000 }).toBe(true);
+  await page.evaluate(() => (window as any).__game.place(1500, 0)); // the Kemmel straight, through the forest
+  await page.waitForTimeout(1000);
+  const lods = await page.evaluate(() => {
+    const out: Record<string, number> = {};
+    for (const m of (window as any).__game.three.scene.getObjectByName('trees').children)
+      if (m.userData.lod && m.visible) out[`${m.userData.species}_${m.userData.lod}`] = (out[`${m.userData.species}_${m.userData.lod}`] ?? 0) + m.instanceMatrix.count;
+    return out;
+  });
+  expect(lods.spruce_hi).toBeGreaterThan(100);
+  expect(lods.spruce_lo).toBeGreaterThan(lods.spruce_hi); // most of the forest is far away
+  expect(lods.spruce_hi).toBeGreaterThan(lods.broadleaf_hi ?? 0);
+  expect(lods.palm_hi ?? 0).toBe(0);
+  expect(errors).toEqual([]);
+});
