@@ -138,7 +138,7 @@ test('on Beginner the car takes itself into the pits for the compulsory stop', a
   // lap 2 of 3 is the pit lap: jump to near the end of it
   await page.evaluate(() => { const g = (window as any).__game, r = g.race; g.place(r.track.length - 700, 0); r.player.completed = 1; r.player.total = r.track.length * 2 - 700; });
   await page.keyboard.down('ArrowUp');
-  await expect(page.locator('#msg')).toContainText('BOX');
+  await expect(page.locator('#pitinfo')).toContainText('AUTO PIT');
   await expect(page.locator('#cutscene')).toContainText('PIT STOP', { timeout: 40_000 });
   await page.keyboard.up('ArrowUp');
 });

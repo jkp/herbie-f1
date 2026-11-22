@@ -30,11 +30,12 @@ export async function skipCutscene(page: Page, touch = false) {
   await expect(c).toBeHidden();
 }
 
-/** Box this lap and put the player in the mouth of the pit lane, `rel` metres from the line. */
-export async function intoPitLane(page: Page, rel = -380) {
+/** Box this lap and put the player in the pit lane, `rel` metres from the line. */
+export async function intoPitLane(page: Page, rel = -280) {
   await page.evaluate(rel => {
     const g = (window as any).__game, r = g.race, { pit } = r;
     r.player.boxRequested = true;
     g.place(r.track.length + rel, pit.side * pit.centre(rel));
+    r.player.inPitLane = true;
   }, rel);
 }

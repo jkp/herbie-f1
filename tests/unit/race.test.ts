@@ -206,7 +206,7 @@ describe('race', () => {
     expect(p.car.grip).toBeLessThan(1);
     p.boxRequested = true; p.nextCompound = 2;
     // follow the pit lane from before the entry
-    drive(race, track.length - 700, track.length - 200, s => race.pit.centre(s - track.length), r => r.pitTimer > 0);
+    drive(race, track.length - 700, track.length - 20, s => race.pit.centre(s - track.length), r => r.pitTimer > 0);
     expect(p.inPitLane).toBe(true);
     expect(p.pitTimer).toBeGreaterThan(0);
     expect(p.boxRequested).toBe(false);

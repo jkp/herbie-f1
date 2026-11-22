@@ -1,6 +1,7 @@
 import { GRIP_AERO, GRIP_BASE, brakeDecel, maxSteerAngle, type Controls } from './car';
 import { pointAt, wrapAngle, type Track } from './track';
-import type { Race, Racer } from './race';
+import { PIT, boxAt, type Race, type Racer } from './race';
+import { TEAMS } from './grid';
 
 /** Fastest safe speed at each track point: corner limit from grip, then braking zones worked backwards. */
 export function speedProfile(t: Track): Float64Array {
@@ -18,10 +19,10 @@ export function speedProfile(t: Track): Float64Array {
   return v;
 }
 
-/** Pure-pursuit steering input that follows the track `lane` metres right of the centreline. */
-export function pursuitSteer(r: Racer, race: Race, lane: number) {
-  const c = r.car, v = Math.max(c.speed, 5);
-  const ahead = pointAt(race.track, r.s + 6 + v * 0.3);
+/** Pure-pursuit steering input that follows the track `lane` metres right of the centreline (or a line that varies along the lap). */
+export function pursuitSteer(r: Racer, race: Race, laneAt: number | ((s: number) => number)) {
+  const c = r.car, v = Math.max(c.speed, 5), s = r.s + 6 + v * 0.3;
+  const ahead = pointAt(race.track, s), lane = typeof laneAt === 'number' ? laneAt : laneAt(s);
   const tx = ahead.x - Math.sin(ahead.heading) * lane, tz = ahead.z + Math.cos(ahead.heading) * lane;
   const err = wrapAngle(Math.atan2(tz - c.z, tx - c.x) - c.heading);
   const ld = Math.hypot(tx - c.x, tz - c.z);
@@ -46,15 +47,26 @@ export function assistControls(r: Racer, race: Race, ctl: Controls, help: { brak
 
 /** Pure-pursuit steering towards a point ahead on the racer's lane, throttle/brake to hold the speed profile. */
 export function aiControls(r: Racer, race: Race, skill = r.skill): Controls {
-  const c = r.car, v = Math.max(c.speed, 5);
-  const steer = pursuitSteer(r, race, r.lane);
+  const c = r.car, v = Math.max(c.speed, 5), { pit } = race, rel = pit.rel(r.s);
+  // heading for the pits: follow the lane, swing into our box if we're stopping, and keep to the limit
+  const pitting = r.inPitLane || r.boxRequested && rel > PIT.a - 150 && rel < PIT.b;
+  const box = boxAt(TEAMS.indexOf(r.team));
+  const pitLine = (s: number) => {
+    const q = pit.rel(s), toBox = r.boxRequested ? Math.max(0, 1 - Math.abs(q - box) / 25) : 0;
+    return pit.side * (pit.centre(q) + (pit.box - pit.fast) * toBox * toBox * (3 - 2 * toBox));
+  };
+  const steer = pursuitSteer(r, race, pitting ? pitLine : r.lane);
 
   let target = race.profile[r.i] * skill * Math.sqrt(c.grip); // corner speed ∝ √grip
+  if (pitting && rel < PIT.c) {
+    target = Math.min(target, Math.sqrt(PIT.limit ** 2 + 2 * 8 * Math.max(0, PIT.b - rel)) - 0.5);
+    if (r.boxRequested) target = Math.min(target, Math.sqrt(2 * 6 * Math.max(0, box - rel)) + 1.5);
+  }
   // traffic: follow a slower car in our lane, and pull to its other side to pass
   const room = race.track.width / 2 - 2;
   for (const o of race.racers) {
     const gap = o.total - r.total;
-    if (o === r || o.pitTimer > 0 || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
+    if (o === r || o.pitTimer > 0 || o.inPitLane !== r.inPitLane || gap <= 0 || gap > 8 + v * 0.4 || Math.abs(o.lateral - r.lateral) > 2.6) continue;
     if (o.car.speed < c.speed) {
       target = Math.min(target, o.car.speed - 1 + gap * 0.3);
       r.lane = o.lateral > 0 ? -room : room;

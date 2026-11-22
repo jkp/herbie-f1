@@ -130,6 +130,15 @@
     #touch [data-act=cam] { left: calc(50% - 92px); }
     #touch [data-act=reset] { left: calc(50% + 6px); }
     #touch [data-act=box] { top: auto; bottom: calc(206px + env(safe-area-inset-bottom)); right: calc(24px + env(safe-area-inset-right)); width: 118px; border-color: #facc15; }
+    #pitinfo { position: fixed; top: 13%; left: 50%; transform: translateX(-50%); padding: 10px 22px; border-radius: 10px;
+      background: #facc15; color: #111; font-size: 30px; font-weight: 900; letter-spacing: .04em; pointer-events: none; white-space: nowrap; }
+    #tyrepick { position: fixed; top: calc(13% + 62px); left: 50%; transform: translateX(-50%); z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 8px;
+      padding: 12px 16px; border-radius: 12px; background: rgba(12,14,20,.8); color: #fff; }
+    #tyrepick .k { font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+    #tyrebtns { display: flex; gap: 10px; }
+    #tyrebtns button { font: 700 20px 'Titillium Web', system-ui, sans-serif; color: #fff; background: #1f2937; border: 4px solid; border-radius: 999px;
+      width: 80px; height: 80px; touch-action: manipulation; cursor: pointer; }
+    #tyrebtns button[aria-pressed=true] { background: #475569; box-shadow: 0 0 0 3px #fff; }
     .hidden { display: none !important; }
     @media (max-width: 700px) { #tower { display: none; } #map { display: none; } }
   </style>
@@ -164,6 +173,8 @@
   <div id="cutscene" class="hidden"><div class="cap"><div id="cut-title"></div><div id="cut-sub"></div></div><div class="skip">Tap to skip</div></div>
   <div id="lights"><i></i><i></i><i></i><i></i><i></i></div>
   <div id="msg"></div>
+  <div id="pitinfo" class="hidden"></div>
+  <div id="tyrepick" class="hidden"><div class="k">New tyres</div><div id="tyrebtns"></div></div>
 
   <div id="menu" class="overlay">
     <section id="home">
@@ -181,6 +192,7 @@
         <b>R</b><span>Reset car to track</span>
         <b>M</b><span>Mute engine</span>
         <b>B</b><span>Box for new tyres</span>
+        <b>1 2 3</b><span>Soft / medium / hard tyres in the pits</span>
       </div>
       <p class="credit">Buildings © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> · people by Quaternius (CC0) · circuits by bacinger/f1-circuits (MIT)</p>
     </section>
@@ -225,6 +237,8 @@
         <div class="card" id="hub-info"></div>
         <div class="card" id="hub-next"></div>
       </div>
+      <h3>Starting tyres</h3>
+      <div id="hub-tyres" class="pills"></div>
       <button id="hub-race" class="primary">Race</button>
       <h3>Drivers' championship</h3>
       <div class="tablewrap"><table id="standings"></table></div>
@@ -246,6 +260,8 @@
       <p id="assist-note" class="lede"></p>
       <h3>Race length</h3>
       <div id="lapslist" class="pills"></div>
+      <h3>Starting tyres</h3>
+      <div id="tyrelist" class="pills"></div>
       <button id="start-btn" class="primary">Start race</button>
       <button class="back" data-back="drivers">Back</button>
     </section>

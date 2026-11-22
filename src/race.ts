@@ -17,26 +17,53 @@ export interface Racer {
   pitTimer: number;      // > 0 while in the pits
   pits: number; stopTime: number;
   pitLaps: number[];     // compulsory stops: pit at the end of these laps
+  compound: number; nextCompound: number; // index into COMPOUNDS: on the car now, and for the next stop
+  inPitLane: boolean; punctured: boolean;
 }
 export interface Race {
   track: Track; profile: Float64Array; racers: Racer[]; player: Racer;
   laps: number; difficulty: number; time: number; pitSide: number; countdown: number; phase: 'countdown' | 'racing' | 'finished';
-  runoff: number;
+  runoff: number; pit: ReturnType<typeof pitLane>;
 }
 
 const CAR_RADIUS = 2.2;
-/** Race-seconds lost to a pit stop: pit lane plus the stationary time. */
-export const PIT_TIME = 20;
-
-/** Compulsory stops, as the laps to pit at the end of: one in short races, two from 10 laps, evenly spaced. */
+/** Compulsory stops, as the laps to pit at the end of: one in short races, two from 10 laps, three from 20, evenly spaced. */
 export function pitPlan(laps: number) {
-  const stops = laps >= 10 ? 2 : laps >= 3 ? 1 : 0;
+  const stops = laps >= 20 ? 3 : laps >= 10 ? 2 : laps >= 3 ? 1 : 0;
   return Array.from({ length: stops }, (_, k) => Math.round(laps * (k + 1) / (stops + 1)));
 }
 
-/** Tyre grip after `lapsOn` laps; tyres last about half a race, so long races want one stop. */
-export const tyreGrip = (lapsOn: number, raceLaps: number) =>
-  1 - 0.1 * Math.min(1.6, lapsOn / Math.max(4, raceLaps * 0.55)) ** 2;
+/** Tyre compounds: grip when fresh, and life as a multiple of a planned stint. Sidewall colours as in F1. */
+export const COMPOUNDS = [
+  { name: 'Soft', color: 0xd9262c, grip: 1.03, life: 1.1 },
+  { name: 'Medium', color: 0xfacc15, grip: 1, life: 1.5 },
+  { name: 'Hard', color: 0xf2f2f2, grip: 0.97, life: 2 },
+];
+/** A tyre bursts this far past the end of its life. */
+export const PUNCTURE_AT = 1.5;
+/** Laps a compound lasts in a race of `raceLaps`: a multiple of the planned stint. */
+export const tyreLife = (compound: number, raceLaps: number) => COMPOUNDS[compound].life * raceLaps / (pitPlan(raceLaps).length + 1);
+/** Grip after `lapsOn` laps on tyres that last `life` laps: a gentle fade, then a cliff. */
+export function tyreGrip(lapsOn: number, life: number, compound: number) {
+  const x = lapsOn / life, g = COMPOUNDS[compound].grip;
+  return x <= 1 ? g * (1 - 0.05 * x * x) : Math.max(0.45, g * 0.95 - 0.5 * (x - 1));
+}
+
+/** Pit lane timing points, in metres from the start line (negative = before it), and the 80 km/h limit. */
+export const PIT = { a: -460, b: -300, c: 60, d: 220, limit: 22.2 };
+const smooth = (k: number) => k * k * (3 - 2 * k);
+/** The pit lane: peels off the track edge at `a`, runs behind the pit wall from `b` (limiter on) to `c`, rejoins by `d`. */
+export function pitLane(t: Track, side = pitSide(t)) {
+  const w = t.width / 2, wall = w + t.runoff, fast = wall + 5, box = wall + 12, join = w - 2;
+  /** Lane centre's distance from the track centreline at `rel` metres from the line. */
+  const centre = (rel: number) => join + (fast - join) * (rel < PIT.a || rel > PIT.d ? 0
+    : rel < PIT.b ? smooth((rel - PIT.a) / (PIT.b - PIT.a)) : rel <= PIT.c ? 1 : smooth((PIT.d - rel) / (PIT.d - PIT.c)));
+  /** Metres from the line, negative before it. */
+  const rel = (s: number) => (s > t.length / 2 ? s - t.length : s);
+  return { side, wall, fast, box, centre, rel };
+}
+/** Where a team's car stops: its box, in metres from the line. */
+export const boxAt = (teamIndex: number) => -40 - teamIndex * 16;
 
 /** Which side of the start straight has room for the pit garages (+1 right, -1 left). */
 export function pitSide(t: Track) {
@@ -48,26 +75,27 @@ export function pitSide(t: Track) {
 }
 /** Garage spot for a team, behind the barrier before the start line. */
 export function pitBox(t: Track, teamIndex: number, side = pitSide(t)) {
-  const p = pointAt(t, -40 - teamIndex * 16), off = side * (t.width / 2 + t.runoff + 8);
+  const p = pointAt(t, boxAt(teamIndex)), off = side * pitLane(t, side).box;
   return { x: p.x - Math.sin(p.heading) * off, z: p.z + Math.cos(p.heading) * off, heading: p.heading };
 }
 
 
 // AI drive at `pace` × the speed profile × car pace × driver skill.
 // `assist`: driving help for the player (auto-brake, steering help, extra grip).
+// `pit`: help getting into the pits: the game drives you in, arrows show the way, or just the call on the radio.
 const NONE = { brake: false, steer: false, grip: 1 };
 export const DIFFICULTIES = [
-  { name: 'Beginner', pace: 0.74, assist: { brake: true, steer: true, grip: 1.25 } },
-  { name: 'Amateur', pace: 0.8, assist: { brake: true, steer: true, grip: 1.12 } },
-  { name: 'Semi-Pro', pace: 0.87, assist: { brake: true, steer: false, grip: 1 } },
-  { name: 'Pro', pace: 0.93, assist: NONE },
-  { name: 'World Class', pace: 0.955, assist: NONE },
-  { name: 'Legendary', pace: 0.98, assist: NONE },
-];
+  { name: 'Beginner', pace: 0.74, assist: { brake: true, steer: true, grip: 1.25 }, pit: 'auto' },
+  { name: 'Amateur', pace: 0.8, assist: { brake: true, steer: true, grip: 1.12 }, pit: 'auto' },
+  { name: 'Semi-Pro', pace: 0.87, assist: { brake: true, steer: false, grip: 1 }, pit: 'arrows' },
+  { name: 'Pro', pace: 0.93, assist: NONE, pit: 'arrows' },
+  { name: 'World Class', pace: 0.955, assist: NONE, pit: 'call' },
+  { name: 'Legendary', pace: 0.98, assist: NONE, pit: 'call' },
+] as const;
 
 /** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
 export function createRace(track: Track, o: {
-  laps: number; countdown: number; player: string; size?: number; difficulty?: number;
+  laps: number; countdown: number; player: string; size?: number; difficulty?: number; tyre?: number; // player's starting compound
   rookie?: { name: string; code: string; number: number; replaces: string }; // career driver taking a seat
 }): Race {
   const difficulty = o.difficulty ?? 3, rk = o.rookie;
@@ -85,13 +113,15 @@ export function createRace(track: Track, o: {
       car, i: p.i, s: track.length - back, lateral: side, total: -back,
       completed: 0, lapStart: 0, lastLap: 0, bestLap: 0, finished: false, finishTime: 0,
       tyreFrom: -back, boxRequested: false, pitTimer: 0, pits: 0, stopTime: 0,
+      compound: d.code === o.player ? o.tyre ?? 1 : 1, nextCompound: d.code === o.player ? 1 : 2, inPitLane: false, punctured: false,
       // everyone makes the same number of stops; AI spread their timing by up to a lap either way
       pitLaps: pitPlan(o.laps).map((lap, i, plan) => d.code === o.player ? lap
         : Math.min(o.laps - 1 - (plan.length - 1 - i), Math.max(1 + i, lap + ((k * 7 + i * 3) % 3) - 1))),
     };
   });
+  const side = pitSide(track);
   return {
-    track, profile: speedProfile(track), racers, pitSide: pitSide(track), player: racers.find(r => r.isPlayer)!,
+    track, profile: speedProfile(track), racers, pitSide: side, pit: pitLane(track, side), player: racers.find(r => r.isPlayer)!,
     laps: o.laps, difficulty, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
   };
 }
@@ -104,16 +134,23 @@ export function stepRace(race: Race, dt: number, player: Controls) {
     dt = -race.countdown; race.countdown = 0;
   }
   race.time += dt;
-  const { track } = race, edge = track.width / 2;
+  const { track, pit } = race, edge = track.width / 2;
 
   const out = race.racers.filter(r => r.pitTimer <= 0);
   for (const r of race.racers) {
     if (r.pitTimer > 0) { r.pitTimer -= dt; if (r.pitTimer <= 0) leavePits(race, r); continue; }
     if (r.pits < r.pitLaps.length && r.completed + 1 >= r.pitLaps[r.pits]) r.boxRequested = true;
     const help = DIFFICULTIES[race.difficulty].assist;
-    r.car.grip = tyreGrip((r.total - r.tyreFrom) / track.length, race.laps) * (r.isPlayer ? help.grip : 1);
-    const ctl = r.isPlayer && !r.finished ? assistControls(r, race, player, help) : aiControls(r, race);
-    stepCar(r.car, ctl, dt, Math.abs(r.lateral) <= edge + 1 ? 'track' : 'grass');
+    const lapsOn = (r.total - r.tyreFrom) / track.length, life = tyreLife(r.compound, race.laps);
+    r.punctured = lapsOn >= life * PUNCTURE_AT;
+    r.car.grip = tyreGrip(lapsOn, life, r.compound) * (r.isPlayer ? help.grip : 1);
+    const autoPit = DIFFICULTIES[race.difficulty].pit === 'auto' && (r.inPitLane || r.boxRequested && pit.rel(r.s) > PIT.a - 300 && pit.rel(r.s) < PIT.c);
+    const ctl = r.isPlayer && !r.finished && !autoPit ? assistControls(r, race, player, help) : aiControls(r, race);
+    const onTarmac = Math.abs(r.lateral) <= edge + 1 || r.inPitLane || inPitMouth(race, r.s, r.lateral);
+    stepCar(r.car, ctl, dt, onTarmac ? 'track' : 'grass');
+    if (r.punctured) r.car.speed = Math.min(r.car.speed, 25);
+    if (r.inPitLane && pit.rel(r.s) > PIT.b && pit.rel(r.s) < PIT.c && r.car.speed > PIT.limit)
+      r.car.speed = Math.max(PIT.limit, r.car.speed - 30 * dt); // the limiter brakes you down to 80 km/h
   }
 
   // car-to-car contact: separate and bleed speed off the car behind
@@ -131,15 +168,23 @@ export function stepRace(race: Race, dt: number, player: Controls) {
     }
 
   for (const r of out) {
-    const pr = project(track, r.car.x, r.car.z, r.i);
-    const limit = edge + race.runoff;
-    if (Math.abs(pr.lateral) > limit) {
+    const pr = project(track, r.car.x, r.car.z, r.i), rel = pit.rel(pr.s);
+    // into the pit lane through its mouth; out again where it rejoins
+    if (!r.inPitLane && inPitMouth(race, pr.s, pr.lateral) && pit.side * pr.lateral > edge + 1) r.inPitLane = true;
+    if (r.inPitLane && (rel < PIT.a || rel > PIT.d || rel > PIT.c && pit.side * pr.lateral < edge + 1)) r.inPitLane = false;
+    // the walls: track barriers, or the pit lane's own (the boxes widen it between the entry and exit lines)
+    const c = pit.centre(rel), [lo, hi] = r.inPitLane
+      ? [c - 3.5, rel > PIT.b && rel < PIT.c ? pit.box + 1 : c + 3.5].map(v => v * pit.side).sort((a, b) => a - b)
+      : [-edge - race.runoff, edge + race.runoff];
+    if (pr.lateral < lo || pr.lateral > hi) {
       // hit the barrier: put the car back inside it and scrape along it, losing speed the harder the impact
-      const p = pointAt(track, pr.s), side = Math.sign(pr.lateral) * limit;
+      const p = pointAt(track, pr.s), side = Math.max(lo, Math.min(hi, pr.lateral));
       r.car.x = p.x - Math.sin(p.heading) * side; r.car.z = p.z + Math.cos(p.heading) * side;
-      const along = Math.cos(wrapAngle(r.car.heading - p.heading));
-      r.car.heading = along >= 0 ? p.heading : p.heading + Math.PI;
-      r.car.speed *= Math.abs(along) * 0.7; pr.lateral = side;
+      // the wall's direction: the pit lane's ramps angle away from the track
+      const wallHeading = p.heading + (r.inPitLane ? Math.atan(pit.side * (pit.centre(rel + 1) - pit.centre(rel - 1)) / 2) : 0);
+      const along = Math.cos(wrapAngle(r.car.heading - wallHeading));
+      r.car.heading = along >= 0 ? wallHeading : wallHeading + Math.PI;
+      r.car.speed *= Math.abs(along) * (r.inPitLane ? 1 : 0.7); pr.lateral = side; // pit lane walls: you slide along them at the limiter
     }
     let ds = pr.s - r.s;
     if (ds > track.length / 2) ds -= track.length;
@@ -152,24 +197,33 @@ export function stepRace(race: Race, dt: number, player: Controls) {
       r.lastLap = race.time - r.lapStart; r.lapStart = race.time;
       if (!r.bestLap || r.lastLap < r.bestLap) r.bestLap = r.lastLap;
       if (r.completed >= race.laps) { r.finished = true; r.finishTime = race.time; }
-      else if (r.boxRequested) enterPits(race, r);
     }
+    const box = boxAt(TEAMS.indexOf(r.team));
+    if (r.inPitLane && r.boxRequested && !r.finished && rel >= box - 2 && rel < box + 20) enterPits(race, r);
   }
   if (race.player.finished) race.phase = 'finished';
 }
 
-function enterPits(race: Race, r: Racer) {
-  const box = pitBox(race.track, TEAMS.indexOf(r.team), race.pitSide);
-  r.boxRequested = false; r.pitTimer = PIT_TIME;
-  r.stopTime = 2 + ((r.number * 13 + r.pits * 7) % 12) / 10; // 2.0–3.1 s, varies by car and stop
-  Object.assign(r.car, { x: box.x, z: box.z, heading: box.heading, speed: 0, steer: 0 });
-  r.lateral = race.pitSide * (race.track.width / 2 + race.runoff + 8);
+/** Is lateral offset `lat` at `s` inside the pit lane's mouth, where it peels off the track? */
+function inPitMouth(race: Race, s: number, lat: number) {
+  const { pit } = race, rel = pit.rel(s);
+  return rel >= PIT.a && rel <= PIT.b && Math.abs(pit.side * lat - pit.centre(rel)) < 3.5;
 }
 
-function leavePits(race: Race, r: Racer) {
-  const t = race.track, p = pointAt(t, r.s + 25), off = race.pitSide * (t.width / 2 - 2);
-  Object.assign(r.car, { x: p.x - Math.sin(p.heading) * off, z: p.z + Math.cos(p.heading) * off, heading: p.heading, speed: 22, grip: 1 });
+/** On the marks in the box: stationary while the crew change the tyres. */
+function enterPits(race: Race, r: Racer) {
+  const box = pitBox(race.track, TEAMS.indexOf(r.team), race.pitSide);
+  r.boxRequested = false;
+  r.stopTime = 2 + ((r.number * 13 + r.pits * 7) % 12) / 10; // 2.0–3.1 s, varies by car and stop
+  r.pitTimer = r.stopTime;
+  Object.assign(r.car, { x: box.x, z: box.z, heading: box.heading, speed: 0, steer: 0 });
+  r.lateral = race.pitSide * race.pit.box;
+}
+
+function leavePits(_race: Race, r: Racer) {
   r.pitTimer = 0; r.pits++; r.tyreFrom = r.total;
+  r.compound = r.nextCompound; r.punctured = false;
+  if (!r.isPlayer) r.nextCompound = r.compound === 2 ? 1 : 2;
 }
 
 /** Finishers by finish time, then everyone else by distance covered. */

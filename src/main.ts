@@ -3,7 +3,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { buildTrack, pointAt, wrapAngle, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
-import { createRace, stepRace, standings, DIFFICULTIES, type Race } from './race';
+import { createRace, stepRace, standings, DIFFICULTIES, COMPOUNDS, PIT, tyreLife, type Race } from './race';
 import { makeCrew, makePodium, PODIUM_STEPS } from './scene';
 import { People, type Person } from './people';
 import { pitTimeline } from './pitstop';
@@ -60,7 +60,7 @@ addEventListener('resize', resize); resize();
 let race!: Race;
 let carMeshes: THREE.Group[] = [];
 let def: TrackDef, track!: Track, world: THREE.Group | null = null;
-let driver = 'VER', difficulty = 3, laps = 15;
+let driver = 'VER', difficulty = 3, laps = 15, startTyre = 1;
 
 function loadTrack(d: TrackDef) {
   if (def === d) return;
@@ -83,8 +83,8 @@ function clearCars() { carMeshes.forEach(m => scene.remove(m)); carMeshes = []; 
 function newRace() {
   clearCars();
   race = career && mode === 'career'
-    ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career) })
-    : createRace(track, { ...OPTS, player: driver, difficulty, laps });
+    ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career), tyre: startTyre })
+    : createRace(track, { ...OPTS, player: driver, difficulty, laps, tyre: startTyre });
   carMeshes = race.racers.map(r => { const m = makeCar(r.team, r.number); scene.add(m); return m; });
   seatDriver();
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
@@ -139,13 +139,15 @@ function pills(el: string, items: string[], selected: number, pick: (i: number) 
     return b;
   }));
 }
-const LAP_CHOICES = [3, 5, 10, 15];
+const LAP_CHOICES = [3, 5, 10, 15, 20, 25, 30];
+const tyrePills = (el: string, rerender: () => void) => pills(el, COMPOUNDS.map(c => c.name), startTyre, i => { startTyre = i; }, rerender);
 function renderSettings() {
   pills('difflist', DIFFICULTIES.map(d => d.name), difficulty, i => { difficulty = i; });
   const help = DIFFICULTIES[difficulty].assist;
   $('assist-note').textContent = help.steer ? 'Driving help: auto-braking, steering help and extra grip.'
     : help.brake ? 'Driving help: auto-braking for corners.' : 'No driving help.';
   pills('lapslist', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(laps), i => { laps = LAP_CHOICES[i]; });
+  tyrePills('tyrelist', renderSettings);
 }
 $('start-btn').onclick = startRace;
 $('race-btn').onclick = () => { mode = 'quick'; showMenu('tracks'); };
@@ -184,6 +186,7 @@ function showHub() {
   $('hub-info').innerHTML = `<span class="livery" style="background:${hex(team.color)}"></span><big>${esc(c.name)} #${c.number}</big>
     <small>${esc(c.team)} · Season ${c.season} · Age ${c.age}</small><small>Championship: P${pos} · ${c.points[c.code] ?? 0} pts</small>`;
   $('hub-next').innerHTML = `${outline(next)}<b>${esc(next.gp)}</b><small>Round ${c.round + 1} of ${CALENDAR.length} · ${esc(next.name)} · ${c.laps} laps</small>`;
+  const hubTyres = () => tyrePills('hub-tyres', hubTyres); hubTyres();
   $('standings').innerHTML = table.map((e, k) => `<tr class="${e.code === c.code ? 'me' : ''}"><td>${k + 1}</td><td>${e.code}</td><td>${esc(e.name)}</td><td class="team">${esc(e.team)}</td><td class="pts">${e.points}</td></tr>`).join('');
   showMenu('career-hub');
 }
@@ -241,6 +244,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyM') audio.toggle();
   if (e.code === 'KeyR' && screen === 'race') resetPlayer();
   if (e.code === 'KeyB' || e.code === 'KeyP') toggleBox();
+  if (['Digit1', 'Digit2', 'Digit3'].includes(e.code)) pickTyre(Number(e.code.slice(5)) - 1);
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -300,10 +304,23 @@ function toggleBox() {
 
 function resetPlayer() {
   if (race.player.pitTimer > 0) return;
-  const r = race.player, p = pointAt(track, r.s);
-  r.car.x = p.x; r.car.z = p.z; r.car.heading = p.heading; r.car.speed = 0; r.car.steer = 0;
-  r.lateral = 0;
+  place(race.player.s, 0);
 }
+/** Put the player at `s` metres round the lap, `lat` right of the centreline, stopped. */
+function place(s: number, lat: number) {
+  const r = race.player, p = pointAt(track, s);
+  let ds = p.i === r.i ? 0 : track.cum[p.i] - track.cum[r.i];
+  if (ds > track.length / 2) ds -= track.length; if (ds < -track.length / 2) ds += track.length;
+  r.total += ds; r.s = track.cum[p.i]; r.i = p.i;
+  Object.assign(r.car, { x: p.x - Math.sin(p.heading) * lat, z: p.z + Math.cos(p.heading) * lat, heading: p.heading, speed: 0, steer: 0 });
+  r.lateral = lat; r.inPitLane = false;
+}
+
+// tyre choice while you're in the pit lane, before the crew fit them
+$('tyrebtns').replaceChildren(...COMPOUNDS.map((c, i) => {
+  const b = button(c.name, () => pickTyre(i)); b.style.borderColor = hex(c.color); return b;
+}));
+function pickTyre(i: number) { if (race?.player.inPitLane && race.player.boxRequested) race.player.nextCompound = i; }
 
 // --- engine audio: two detuned oscillators through a low-pass ---
 const audio = (() => {
@@ -348,7 +365,7 @@ function makeMapPath(track: Track) {
   path.closePath();
   return { path, tx: (x: number) => x * sc + ox, tz: (z: number) => z * sc + oz };
 }
-let lastPos = 20, msgTimer = 0, boxCalled = false;
+let lastPos = 20, msgTimer = 0, boxCalled = false, punctureCalled = false, warnedLap = -1;
 function flash(text: string) { $('msg').textContent = text; $('msg').style.opacity = '1'; msgTimer = 2; }
 
 function updateHud(dt: number) {
@@ -364,12 +381,28 @@ function updateHud(dt: number) {
   $('cur').textContent = fmt(race.phase === 'countdown' ? 0.0001 : race.time - p.lapStart);
   $('last').textContent = fmt(p.lastLap);
   $('best').textContent = fmt(p.bestLap);
-  const wear = p.car.grip / DIFFICULTIES[race.difficulty].assist.grip; // leave out easy-mode bonus grip
-  const tyre = Math.round((wear - 0.74) / 0.26 * 100); // 0.74 is fully worn
-  $('tyres').textContent = `${tyre}%`;
-  $('tyres').style.color = tyre > 60 ? '' : tyre > 30 ? '#facc15' : '#ef4444';
+  const life = tyreLife(p.compound, race.laps), tyre = Math.max(0, Math.min(100, Math.round((1 - (p.total - p.tyreFrom) / track.length / life) * 100)));
+  $('tyres').textContent = p.punctured ? 'PUNCTURE' : `${COMPOUNDS[p.compound].name[0]} ${tyre}%`;
+  $('tyres').style.color = p.punctured || tyre <= 15 ? '#ef4444' : tyre > 40 ? '' : '#facc15';
+  if (p.punctured && !punctureCalled) flash('PUNCTURE! BOX NOW');
+  punctureCalled = p.punctured;
   if (p.boxRequested && !boxCalled && race.phase === 'racing') flash('BOX, BOX · PIT THIS LAP');
   boxCalled = p.boxRequested;
+  // the lap before a planned stop, a heads-up
+  if (!p.boxRequested && p.pits < p.pitLaps.length && p.completed + 2 >= p.pitLaps[p.pits] && warnedLap !== p.completed && race.phase === 'racing') {
+    warnedLap = p.completed; flash('PIT NEXT LAP');
+  }
+  // the way in: distance countdown and arrows on the road (not on World Class and Legendary)
+  const help = DIFFICULTIES[race.difficulty].pit, rel = race.pit.rel(p.s), side = race.pit.side;
+  const toEntry = PIT.a - rel, guided = p.boxRequested && help !== 'call' && !p.inPitLane && toEntry > -60 && toEntry < 700;
+  const pitText = p.inPitLane && rel > PIT.b && rel < PIT.c ? 'PIT LANE · 80 km/h' : guided
+    ? (help === 'auto' ? 'AUTO PIT · ' : '') + (side > 0 ? `PIT ENTRY ${Math.max(0, Math.round(toEntry))} m ▶` : `◀ PIT ENTRY ${Math.max(0, Math.round(toEntry))} m`) : '';
+  $('pitinfo').textContent = pitText; $('pitinfo').classList.toggle('hidden', !pitText || !!cut);
+  const arrows = world?.getObjectByName('pitArrows');
+  if (arrows) arrows.visible = guided || (p.boxRequested && help !== 'call' && p.inPitLane && rel < PIT.b);
+  const picking = p.inPitLane && p.boxRequested && rel > PIT.b && !cut; // once you're on the limiter, not while steering in
+  $('tyrepick').classList.toggle('hidden', !picking);
+  if (picking) [...$('tyrebtns').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === p.nextCompound)));
   $('box').classList.toggle('on', p.boxRequested);
   touchLayer.querySelector('[data-act=box]')!.classList.toggle('on', p.boxRequested);
   const leader = order[0];
@@ -528,10 +561,10 @@ function startPitScene() {
 
   const ease = (k: number) => k * k * (3 - 2 * k), clamp01 = (k: number) => Math.max(0, Math.min(1, k));
   playCut({
-    length: T.end,
+    length: T.go + 0.8,
     update(t) {
-      // in down the pit lane, stop on the marks, out again on the green
-      const along = t < T.arrive ? -22 * (1 - ease(clamp01(t / T.arrive))) : t > T.go ? 14 * clamp01((t - T.go) / (T.end - T.go)) ** 2 : 0;
+      // in down the pit lane and onto the marks; you drive it out yourself once the light goes green
+      const along = t < T.arrive ? -22 * (1 - ease(clamp01(t / T.arrive))) : 0;
       const lift = t > T.jackUp && t < T.jackDown ? 0.09 * clamp01((t - T.jackUp) / 0.12) : 0;
       mesh.position.copy(box).addScaledVector(fwd, along); mesh.position.y = lift;
       for (const pr of tyreProps) {
@@ -546,7 +579,7 @@ function startPitScene() {
       lightMat.color.setHex(t > T.go ? 0x22ff44 : 0xff2222); lightMat.emissive.setHex(t > T.go ? 0x00ff22 : 0xff0000);
       crew.forEach(c => c.update(1 / 60));
       if (t > T.arrive && t < T.go) $('cut-sub').textContent = `Stationary ${(t - T.arrive).toFixed(1)}s`;
-      if (t >= T.go) $('cut-sub').textContent = `Stationary ${p.stopTime.toFixed(1)}s · fresh tyres`;
+      if (t >= T.go) $('cut-sub').textContent = `Stationary ${p.stopTime.toFixed(1)}s · ${COMPOUNDS[p.nextCompound].name.toLowerCase()}s on`;
       // low camera off the front corner, crew side
       const cam = new THREE.Vector3(4.6, 1.2, 4.2 - t * 0.15).applyAxisAngle(new THREE.Vector3(0, 1, 0), -heading).add(box);
       camera.position.copy(cam); camera.lookAt(mesh.position.x, 0.5, mesh.position.z);
@@ -555,9 +588,8 @@ function startPitScene() {
       scene.remove(crewRoot);
       mesh.position.y = 0;
       for (const pr of tyreProps) pr.wheel.visible = true;
-      // the rest of the 20 s pit loss happens off camera
       while (race.player.pitTimer > 0) stepRace(race, STEP, { throttle: 0, brake: 0, steer: 0 });
-      flash('PIT EXIT');
+      flash('GO GO GO');
     },
   }, 'PIT STOP', `${p.team.name} crew`);
 }
@@ -581,9 +613,8 @@ function startSimplePitScene() {
     end() {
       for (const w of wheels) w.position.z = 0;
       scene.remove(crew);
-      // the rest of the 20 s pit loss happens off camera
       while (race.player.pitTimer > 0) stepRace(race, STEP, { throttle: 0, brake: 0, steer: 0 });
-      flash('PIT EXIT');
+      flash('GO GO GO');
     },
   }, 'PIT STOP', `${p.team.name} crew · new tyres`);
 }
@@ -690,6 +721,7 @@ function frame(now: number) {
     m.position.set(car.x, 0, car.z); m.rotation.y = -car.heading;
     for (const w of m.userData.wheels as THREE.Mesh[]) w.rotation.z -= car.speed * dt / 0.36;
     for (const f of m.userData.front as THREE.Group[]) f.rotation.y = -car.steer * maxSteerAngle(car.speed) * 2;
+    (m.userData.stripe as THREE.MeshStandardMaterial).color.setHex(COMPOUNDS[r.compound].color);
   });
   updateDriver(dt);
 
@@ -732,4 +764,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, stats: () => ({ buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
