@@ -41,3 +41,17 @@ describe('strategy', () => {
     }
   }, 120_000);
 });
+
+describe('mistakes', () => {
+  it('in the rain some drivers lose it and spin, but the field carries on to the flag', () => {
+    const track = buildTrack(CIRCUITS.find(c => c.id === 'silverstone')!);
+    const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', weather: 2 });
+    const spun = new Set<string>();
+    while (race.racers.some(r => !r.finished && !r.out) && race.time < 1200) {
+      stepRace(race, 1 / 120, aiControls(race.player, race));
+      for (const r of race.racers) if (r.car.spin) spun.add(r.code);
+    }
+    expect(spun.size).toBeGreaterThan(0);
+    expect(race.racers.filter(r => r.finished).length).toBeGreaterThan(15);
+  }, 120_000);
+});

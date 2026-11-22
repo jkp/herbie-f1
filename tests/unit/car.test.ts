@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { newCar, stepCar, gearFor, lateralGrip } from '../../src/car';
+import { newCar, stepCar, gearFor, lateralGrip, startSpin } from '../../src/car';
 
 const run = (secs: number, ctl: { throttle: number; brake: number; steer: number }, surface: 'track' | 'grass' = 'track', car = newCar(0, 0, 0)) => {
   for (let i = 0; i < secs * 120; i++) stepCar(car, ctl, 1 / 120, surface);
@@ -70,5 +70,27 @@ describe('car physics', () => {
     expect(gearFor(90).gear).toBe(8);
     expect(gearFor(50).gear).toBeGreaterThan(gearFor(30).gear);
     expect(gearFor(-3).gear).toBe(0);
+  });
+
+  it('a spinning car ignores the driver, rotates, slides the way it was going, then comes to rest', () => {
+    const car = newCar(0, 0, 0); car.speed = 50;
+    startSpin(car, 1);
+    let turned = 0, last = car.heading;
+    for (let t = 0; t < 8 && car.spin; t += 1 / 120) {
+      stepCar(car, { throttle: 1, brake: 0, steer: -1 }, 1 / 120, 'track');
+      turned += Math.abs(car.heading - last); last = car.heading;
+    }
+    expect(car.spin).toBe(0);
+    expect(car.speed).toBe(0);
+    expect(turned).toBeGreaterThan(Math.PI); // at least half a turn
+    expect(car.x).toBeGreaterThan(60);        // slid on along its old line
+    expect(Math.abs(car.z)).toBeLessThan(1);
+  });
+
+  it('turning harder than the grass allows at speed reports a slide', () => {
+    const car = newCar(0, 0, 0); car.speed = 50;
+    expect(stepCar(car, { throttle: 1, brake: 0, steer: 1 }, 1 / 120, 'grass')).toBeGreaterThan(1.5);
+    const calm = newCar(0, 0, 0); calm.speed = 50;
+    expect(stepCar(calm, { throttle: 1, brake: 0, steer: 0 }, 1 / 120, 'track')).toBeLessThan(1);
   });
 });

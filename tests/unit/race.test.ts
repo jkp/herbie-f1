@@ -267,3 +267,115 @@ describe('race', () => {
     expect(p.lateral).toBeGreaterThanOrEqual(-mon.room[0][p.i] - 0.05);
   });
 });
+
+/** Put racer `r` at `s` metres round the lap, `lat` right of the centreline, at `speed`, heading `dh` off the track's direction. */
+function put(race: Race, r: Race['racers'][number], s: number, lat: number, speed: number, dh = 0) {
+  const pt = pointAt(race.track, s);
+  Object.assign(r.car, { x: pt.x - Math.sin(pt.heading) * lat, z: pt.z + Math.cos(pt.heading) * lat, heading: pt.heading + dh, speed });
+  r.i = pt.i; r.s = race.track.cum[pt.i]; r.total = s; r.lateral = lat;
+}
+const go = { throttle: 1, brake: 0, steer: 0 };
+/** A two-car race: `hitter` closes on `struck` from behind, offset `lat` to its right, `closing` m/s faster. */
+function tap(o: { difficulty?: number; lat: number; closing: number; struckIsPlayer?: boolean }) {
+  const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 2, difficulty: o.difficulty ?? 3 });
+  const [player, ai] = [race.player, race.racers.find(r => !r.isPlayer)!];
+  const [struck, hitter] = o.struckIsPlayer ? [player, ai] : [ai, player];
+  put(race, struck, 800, 0, 30);
+  put(race, hitter, 800 - Math.sqrt(4.3 ** 2 - o.lat ** 2), o.lat, 30 + o.closing);
+  stepRace(race, 1 / 120, idle);
+  return { race, struck, hitter };
+}
+
+describe('crashes', () => {
+  it('clip the back corner of a car and it spins; your front wing takes the damage', () => {
+    const { struck, hitter } = tap({ lat: 2, closing: 14 });
+    expect(struck.car.spin).not.toBe(0);
+    expect(hitter.car.spin).toBe(0);
+    expect(hitter.damage).toBeGreaterThan(0.2);
+    expect(struck.out || hitter.out).toBe(false);
+  });
+
+  it('a gentle nudge from straight behind is just a bump', () => {
+    const { struck, hitter } = tap({ lat: 0, closing: 3 });
+    expect(struck.car.spin).toBe(0);
+    expect(hitter.damage).toBe(0);
+  });
+
+  it('a broken front wing costs grip, and badly damaged cars are called in', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 }), p = race.player;
+    put(race, p, 800, 0, 30); stepRace(race, 1 / 120, go);
+    const fresh = p.car.grip;
+    p.damage = 0.5; stepRace(race, 1 / 120, go);
+    expect(p.car.grip).toBeLessThan(fresh * 0.9);
+    expect(p.boxRequested).toBe(true);
+  });
+
+  it('the pit crew fit a new nose: a longer stop, and the car comes out undamaged', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 }), p = race.player;
+    drive(race, -20, track.length - 700, () => 0);
+    p.damage = 0.6; p.boxRequested = true;
+    drive(race, track.length - 700, track.length - 20, s => race.pit.centre(s - track.length), r => r.pitTimer > 0);
+    expect(p.pitTimer).toBeGreaterThan(5);
+    for (let t = 0; t < 8; t += 0.1) stepRace(race, 0.1, idle);
+    expect(p.pitTimer).toBe(0);
+    expect(p.damage).toBe(0);
+  });
+
+  it('a huge hit puts the car out of the race: it stops, the marshals push it off, and it drops to the back', () => {
+    const { race, hitter } = tap({ difficulty: 5, lat: 0.5, closing: 45 });
+    expect(hitter.out).toBe(true);
+    for (let t = 0; t < 10; t += 1 / 120) stepRace(race, 1 / 120, go);
+    expect(hitter.car.speed).toBe(0);
+    expect(Math.abs(hitter.lateral)).toBeGreaterThan(track.width / 2);
+    expect(standings(race).at(-1)).toBe(hitter);
+    expect(race.phase).toBe('finished'); // the player was the one out: race over for them
+  });
+
+  it('crash help by difficulty: no spins or damage on Beginner, spins on Amateur, damage from Semi-Pro, race-ending crashes from World Class', () => {
+    expect(DIFFICULTIES.map(d => d.crash)).toEqual([
+      { spin: false, damage: false, retire: false },
+      { spin: true, damage: false, retire: false },
+      { spin: true, damage: true, retire: false },
+      { spin: true, damage: true, retire: false },
+      { spin: true, damage: true, retire: true },
+      { spin: true, damage: true, retire: true },
+    ]);
+    const beginner = tap({ difficulty: 0, lat: 2, closing: 14, struckIsPlayer: true });
+    expect(beginner.struck.car.spin).toBe(0);
+    const hit = tap({ difficulty: 0, lat: 2, closing: 14 });
+    expect(hit.hitter.damage).toBe(0);
+    const pro = tap({ difficulty: 3, lat: 0.5, closing: 45 });
+    expect(pro.hitter.out).toBe(false); // Pro: wrecked, but still running
+  });
+
+  it('hit the wall hard enough and you are out; a glancing hit only scrapes', () => {
+    const at = (difficulty: number, angle: number, speed: number) => {
+      const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 1, difficulty }), p = race.player;
+      put(race, p, 300, track.width / 2 + track.runoff + 0.5, speed, angle);
+      stepRace(race, 1 / 120, idle);
+      return p;
+    };
+    expect(at(5, 0.2, 50).damage).toBe(0);
+    expect(at(3, 0.6, 60).damage).toBeGreaterThan(0);
+    expect(at(5, 0.9, 75).out).toBe(true);
+  });
+
+  it('a car out of the race brings out the safety car: the field queues behind it, then it comes in', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 3, difficulty: 3 });
+    const [a, b, c] = race.racers;
+    put(race, a, 1500, 0, 60); put(race, c, 800, 0, 20); put(race, b, 800 - 4.2, 0.4, 70);
+    stepRace(race, 1 / 120, go);
+    const out = race.racers.find(r => r.out)!;
+    expect(out).toBeDefined();
+    expect(race.safety).not.toBeNull();
+    const sc = race.safety!;
+    // whoever's right behind the safety car can't pass it or go faster
+    const p = race.player === out ? race.racers.find(r => r !== out)! : race.player;
+    put(race, p, sc.s - 20, 0, 70);
+    for (let t = 0; t < 3; t += 1 / 120) stepRace(race, 1 / 120, go);
+    expect(p.car.speed).toBeLessThan(race.safety!.speed + 3);
+    expect((race.safety!.s - p.s + track.length) % track.length).toBeLessThan(track.length / 2);
+    for (let t = 0; t < 90 && race.safety; t += 1 / 120) stepRace(race, 1 / 120, go);
+    expect(race.safety).toBeNull();
+  });
+});
