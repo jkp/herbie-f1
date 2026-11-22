@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 
 /** Home → track → team → driver, by click or by touch. */
-export async function pickRace(page: Page, o: { track: string; team: string; driver: string; difficulty?: string; laps?: number }, touch = false) {
+export async function pickRace(page: Page, o: { track: string; team: string; driver: string; difficulty?: string; laps?: number; tyre?: string }, touch = false) {
   const press = (name: string | RegExp) => {
     const b = page.getByRole('button', { name, exact: typeof name === 'string' });
     return touch ? b.tap() : b.click();
@@ -17,6 +17,7 @@ export async function pickRace(page: Page, o: { track: string; team: string; dri
   await expect(page.getByRole('heading', { name: 'Race settings' })).toBeVisible();
   await press(o.difficulty ?? 'Pro');
   await press(`${o.laps ?? 3} laps`);
+  if (o.tyre) await press(o.tyre);
   await press('Start race');
   await skipCutscene(page, touch);
 }
@@ -27,4 +28,13 @@ export async function skipCutscene(page: Page, touch = false) {
   await expect(c).toBeVisible();
   await (touch ? c.tap() : c.click());
   await expect(c).toBeHidden();
+}
+
+/** Box this lap and put the player in the mouth of the pit lane, `rel` metres from the line. */
+export async function intoPitLane(page: Page, rel = -380) {
+  await page.evaluate(rel => {
+    const g = (window as any).__game, r = g.race, { pit } = r;
+    r.player.boxRequested = true;
+    g.place(r.track.length + rel, pit.side * pit.centre(rel));
+  }, rel);
 }

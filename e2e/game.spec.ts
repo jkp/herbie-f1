@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { pickRace, skipCutscene } from './flow';
+import { pickRace, skipCutscene, intoPitLane } from './flow';
 
 test('pick a track, car and driver, then drive off the grid', async ({ page }) => {
   const errors: string[] = [];
@@ -68,19 +68,34 @@ test('results screen offers race again and main menu', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Main menu' })).toBeVisible();
 });
 
-test('boxing plays the pit stop cutscene then rejoins on fresh tyres', async ({ page }) => {
+test('drive into the pit lane: pick new tyres on the way in, the crew change them, then drive out', async ({ page }) => {
   await page.goto('/?countdown=0');
   await pickRace(page, { track: 'Silverstone', team: 'Ferrari', driver: 'Carlos Sainz', laps: 5 });
-  await page.keyboard.press('KeyB');
-  await expect(page.locator('#box')).toHaveClass(/on/);
-  // put the player just short of the line so the next crossing ends the lap
-  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length - 0.001; });
+  await intoPitLane(page);
   await page.keyboard.down('ArrowUp');
-  await expect(page.locator('#cutscene')).toContainText('PIT STOP');
+  await expect(page.locator('#tyrepick')).toBeVisible();
+  await page.getByRole('button', { name: /Hard/ }).click();
+  await expect(page.locator('#cutscene')).toContainText('PIT STOP', { timeout: 20_000 });
   await expect(page.locator('#cutscene')).toBeHidden({ timeout: 15_000 });
   await page.keyboard.up('ArrowUp');
-  const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, fresh: r.car.grip > 0.99, pit: r.pitTimer }; });
-  expect(p).toEqual({ pits: 1, fresh: true, pit: 0 });
+  const p = await page.evaluate(() => { const r = (window as any).__game.race.player; return { pits: r.pits, compound: r.compound, pit: r.pitTimer }; });
+  expect(p).toEqual({ pits: 1, compound: 2, pit: 0 });
+});
+
+test('race settings offer 3 to 30 laps and a choice of starting tyres', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Monza', team: 'Mercedes', driver: 'George Russell', laps: 30, tyre: 'Soft' });
+  const r = await page.evaluate(() => { const r = (window as any).__game.race; return { laps: r.laps, compound: r.player.compound }; });
+  expect(r).toEqual({ laps: 30, compound: 0 });
+  await expect(page.locator('#tyres')).toContainText('S');
+});
+
+test('on Pro, arrows and a countdown show the way into the pit lane when you are called in', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Silverstone', team: 'Ferrari', driver: 'Carlos Sainz', laps: 5 });
+  await page.evaluate(() => { const g = (window as any).__game, r = g.race; r.player.boxRequested = true; g.place(r.track.length - 700, 0); });
+  await expect(page.locator('#pitinfo')).toContainText(/PIT ENTRY \d+ m/);
+  expect(await page.evaluate(() => (window as any).__game.stats().pitArrows)).toBe(true);
 });
 
 test('the intro cutscene names the Grand Prix and holds the start until it ends', async ({ page }) => {
@@ -110,21 +125,21 @@ test('a real driver sits in your car, and the pit crew time the stop', async ({ 
   await pickRace(page, { track: 'Monza', team: 'McLaren', driver: 'Lando Norris', laps: 5 });
   expect(await page.evaluate(() => (window as any).__game.stats().driver)).toBe(true);
   await page.keyboard.press('KeyC'); // cockpit
-  await page.keyboard.press('KeyB');
-  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length - 0.001; });
+  await intoPitLane(page);
   await page.keyboard.down('ArrowUp');
-  await expect(page.locator('#cut-sub')).toHaveText(/^Stationary \d\.\ds/, { timeout: 10_000 });
+  await expect(page.locator('#cut-sub')).toHaveText(/^Stationary \d\.\ds/, { timeout: 20_000 });
   await page.keyboard.up('ArrowUp');
   expect(errors).toEqual([]);
 });
 
-test('the player is called in for a compulsory stop without pressing BOX', async ({ page }) => {
+test('on Beginner the car takes itself into the pits for the compulsory stop', async ({ page }) => {
   await page.goto('/?countdown=0');
-  await pickRace(page, { track: 'Bahrain', team: 'Alpine', driver: 'Fernando Alonso', laps: 3 });
-  // lap 2 of 3 is the pit lap: jump to the end of it
-  await page.evaluate(() => { const r = (window as any).__game.race; r.player.total = r.track.length * 2 - 0.001; r.player.completed = 1; });
+  await pickRace(page, { track: 'Bahrain', team: 'Alpine', driver: 'Fernando Alonso', difficulty: 'Beginner', laps: 3 });
+  // lap 2 of 3 is the pit lap: jump to near the end of it
+  await page.evaluate(() => { const g = (window as any).__game, r = g.race; g.place(r.track.length - 700, 0); r.player.completed = 1; r.player.total = r.track.length * 2 - 700; });
   await page.keyboard.down('ArrowUp');
-  await expect(page.locator('#cutscene')).toContainText('PIT STOP');
+  await expect(page.locator('#msg')).toContainText('BOX');
+  await expect(page.locator('#cutscene')).toContainText('PIT STOP', { timeout: 40_000 });
   await page.keyboard.up('ArrowUp');
 });
 
