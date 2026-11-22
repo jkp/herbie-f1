@@ -46,6 +46,22 @@ describe('driving help on the easy difficulties', () => {
     expect(race.player.lateral).toBeLessThan(before - 2);
   });
 
+  it('pit help: the game drives you in on Beginner and Amateur, arrows on Semi-Pro and Pro, just the call above that', () => {
+    expect(DIFFICULTIES.map(d => d.pit)).toEqual(['auto', 'auto', 'arrows', 'arrows', 'call', 'call']);
+  });
+
+  it('on Beginner, holding only the throttle still makes the compulsory stop: the car drives itself through the pit lane', () => {
+    const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 1, difficulty: 0 });
+    let inLane = false;
+    while (!race.player.finished && race.time < 600) {
+      stepRace(race, 1 / 120, { throttle: 1, brake: 0, steer: 0 });
+      inLane ||= race.player.inPitLane;
+    }
+    expect(race.player.finished).toBe(true);
+    expect(inLane).toBe(true);
+    expect(race.player.pits).toBe(1);
+  }, 30_000);
+
   it('makes the AI much slower on Beginner than on Pro', () => {
     expect(DIFFICULTIES[0].pace).toBeLessThan(DIFFICULTIES[3].pace - 0.1);
   });

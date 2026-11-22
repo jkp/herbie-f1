@@ -1,11 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import { buildTrack, pointAt } from '../../src/track';
 import { CIRCUITS } from '../../src/circuits';
-import { createRace, stepRace, standings, DIFFICULTIES, PIT_TIME, tyreGrip, pitPlan } from '../../src/race';
+import { createRace, stepRace, standings, DIFFICULTIES, tyreGrip, tyreLife, COMPOUNDS, PUNCTURE_AT, pitPlan, PIT, type Race } from '../../src/race';
 import { DRIVERS } from '../../src/grid';
 
 const track = buildTrack(CIRCUITS[0]);
 const idle = { throttle: 0, brake: 0, steer: 0 };
+/** Put the player at distance `s`, `lat` metres right of the centreline, pointing along the track. */
+function place(race: Race, s: number, lat: number) {
+  const pt = pointAt(race.track, s), c = race.player.car;
+  c.x = pt.x - Math.sin(pt.heading) * lat; c.z = pt.z + Math.cos(pt.heading) * lat; c.heading = pt.heading;
+}
+/** Drive the player along a line (`lat(s)` right of the centreline) from `from` to `to`, 5 m per 0.1 s step. */
+function drive(race: Race, from: number, to: number, lat: (s: number) => number, until = (_: Race['player']) => false) {
+  for (let s = from; s <= to; s += 5) {
+    place(race, s, race.pit.side * lat(s)); stepRace(race, 0.1, idle);
+    if (until(race.player)) return;
+  }
+}
 
 describe('race', () => {
   it('lines up all 20 drivers on a grid behind the line with a countdown', () => {
@@ -117,11 +129,13 @@ describe('race', () => {
     expect(Math.abs(p.car.heading - pt.heading)).toBeLessThan(0.05);
   });
 
-  it('makes every car stop once in short races and twice in 10+ lap races, spread through the race', () => {
+  it('makes every car stop once in short races, twice from 10 laps and three times from 20, spread through the race', () => {
     expect(pitPlan(3)).toEqual([2]);
     expect(pitPlan(5)).toEqual([3]);
     expect(pitPlan(10)).toEqual([3, 7]);
     expect(pitPlan(15)).toEqual([5, 10]);
+    expect(pitPlan(20)).toEqual([5, 10, 15]);
+    expect(pitPlan(30)).toEqual([8, 15, 23]);
     expect(pitPlan(2)).toEqual([]);
   });
 
@@ -135,54 +149,102 @@ describe('race', () => {
     expect(race.player.pitLaps).toEqual(pitPlan(15));
   });
 
-  it('takes the player in automatically on their pit lap', () => {
+  it('calls the player in on their pit lap', () => {
     const race = createRace(track, { laps: 3, countdown: 0, player: 'VER', size: 1 });
     const p = race.player;
-    for (let s = -20; s <= track.length * 2 + 2; s += 5) {
-      const pt = pointAt(track, s);
-      p.car.x = pt.x; p.car.z = pt.z; p.car.heading = pt.heading;
-      stepRace(race, 0.1, idle);
-      if (p.pitTimer > 0) break;
-    }
-    expect(p.completed).toBe(2);
-    expect(p.pitTimer).toBeGreaterThan(0);
+    for (let s = -20; s <= track.length + 50; s += 5) { place(race, s, 0); stepRace(race, 0.1, idle); }
+    expect(p.completed).toBe(1);
+    expect(p.boxRequested).toBe(true);
   });
 
-  it('wears tyres over the race, faster in short races', () => {
-    expect(tyreGrip(0, 15)).toBe(1);
-    expect(tyreGrip(4, 15)).toBeLessThan(1);
-    expect(tyreGrip(10, 15)).toBeLessThan(tyreGrip(4, 15));
-    expect(tyreGrip(2, 3)).toBeGreaterThan(0.9); // a 3-lap sprint never needs a stop
-    expect(tyreGrip(100, 15)).toBeGreaterThan(0.7); // worn, not undriveable
+  it('has soft, medium and hard tyres: softs grip most and wear out first', () => {
+    expect(COMPOUNDS.map(c => c.name)).toEqual(['Soft', 'Medium', 'Hard']);
+    const [soft, med, hard] = [0, 1, 2].map(c => tyreLife(c, 15));
+    expect(soft).toBeLessThan(med); expect(med).toBeLessThan(hard);
+    expect(med).toBeGreaterThan(15 / 3); // a medium lasts a planned stint
+    expect(tyreGrip(0, soft, 0)).toBeGreaterThan(tyreGrip(0, med, 1));
+    expect(tyreGrip(0, med, 1)).toBeGreaterThan(tyreGrip(0, hard, 2));
   });
 
-  it('boxes the player at the end of the lap: in the pits for PIT_TIME, then back out on fresh tyres', () => {
+  it('wears tyres gently through their life, then they fall off a cliff', () => {
+    const life = tyreLife(1, 15);
+    expect(tyreGrip(0, life, 1)).toBe(1);
+    expect(tyreGrip(life * 0.5, life, 1)).toBeLessThan(1);
+    expect(tyreGrip(life, life, 1)).toBeGreaterThan(0.93);
+    expect(tyreGrip(life * 1.4, life, 1)).toBeLessThan(0.8);
+  });
+
+  it('stay out too long and a tyre punctures: the car crawls until it pits', () => {
+    const race = createRace(track, { laps: 15, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player;
+    p.tyreFrom = p.total - track.length * tyreLife(p.compound, 15) * (PUNCTURE_AT + 0.05);
+    place(race, 300, 0); p.car.speed = 80;
+    for (let t = 0; t < 3; t += 1 / 120) stepRace(race, 1 / 120, { throttle: 1, brake: 0, steer: 0 });
+    expect(p.punctured).toBe(true);
+    expect(p.car.speed).toBeLessThan(26);
+  });
+
+  it('starts the player on the tyre they chose and the AI on mediums', () => {
+    const race = createRace(track, { laps: 15, countdown: 0, player: 'VER', tyre: 0 });
+    expect(race.player.compound).toBe(0);
+    for (const r of race.racers.filter(r => !r.isPlayer)) expect(r.compound).toBe(1);
+  });
+
+  it('has a pit lane alongside the start straight, beyond the barrier, joining the track at each end', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 });
+    const { centre, fast } = race.pit, edge = track.width / 2;
+    expect(fast).toBeGreaterThan(edge + track.runoff + 2);
+    expect(centre(PIT.a)).toBeLessThan(edge);
+    expect(centre((PIT.b + PIT.c) / 2)).toBe(fast);
+    expect(centre(PIT.d)).toBeLessThan(edge);
+  });
+
+  it('drive into the pit lane on your pit lap: the limiter holds 80 km/h, you stop at your box, then leave on new tyres', () => {
     const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 });
     const p = race.player;
-    const drive = (from: number, to: number) => {
-      for (let s = from; s <= to; s += 5) {
-        const pt = pointAt(track, s);
-        p.car.x = pt.x; p.car.z = pt.z; p.car.heading = pt.heading;
-        stepRace(race, 0.1, idle);
-      }
-    };
-    drive(-20, track.length - 50);
+    drive(race, -20, track.length - 700, () => 0);
     expect(p.car.grip).toBeLessThan(1);
-    p.boxRequested = true;
-    drive(track.length - 45, track.length + 2);
-    expect(p.completed).toBe(1);
+    p.boxRequested = true; p.nextCompound = 2;
+    // follow the pit lane from before the entry
+    drive(race, track.length - 700, track.length - 200, s => race.pit.centre(s - track.length), r => r.pitTimer > 0);
+    expect(p.inPitLane).toBe(true);
     expect(p.pitTimer).toBeGreaterThan(0);
     expect(p.boxRequested).toBe(false);
-    expect(Math.abs(p.lateral)).toBeGreaterThan(track.width / 2 + track.runoff); // parked in the garage
-    const totalInPit = p.total;
-    for (let t = 0; t < PIT_TIME + 0.5; t += 0.1) stepRace(race, 0.1, { throttle: 1, brake: 0, steer: 0 });
+    expect(Math.abs(p.lateral)).toBeGreaterThan(race.pit.fast); // in the box
+    expect(p.completed).toBe(0);
+    for (let t = 0; t < 4; t += 0.1) stepRace(race, 0.1, idle);
     expect(p.pitTimer).toBe(0);
     expect(p.pits).toBe(1);
-    expect(p.car.grip).toBeGreaterThan(0.999);
-    expect(Math.abs(p.lateral)).toBeLessThan(track.width / 2);
-    expect(p.total).toBeGreaterThan(totalInPit);
-    expect(p.total).toBeLessThan(track.length + 120);
+    expect(p.compound).toBe(2);
+    expect(p.car.grip).toBeGreaterThan(0.95);
+    p.car.speed = 60;
+    stepRace(race, 1 / 120, { throttle: 1, brake: 0, steer: 0 });
+    for (let t = 0; t < 2; t += 1 / 120) stepRace(race, 1 / 120, { throttle: 1, brake: 0, steer: 0 });
+    expect(p.car.speed).toBeLessThan(PIT.limit + 0.5);
+  });
+
+  it('miss the pit entry and you stay out: no stop this lap, the call stands for the next', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player;
+    drive(race, -20, track.length - 700, () => 0);
+    p.boxRequested = true;
+    drive(race, track.length - 700, track.length + 300, () => 0);
+    expect(p.inPitLane).toBe(false);
+    expect(p.pits).toBe(0);
     expect(p.completed).toBe(1);
+    expect(p.boxRequested).toBe(true);
+  });
+
+  it('the pit wall keeps cars on the track out of the pit lane, and cars in the lane off the track', () => {
+    const race = createRace(track, { laps: 5, countdown: 0, player: 'VER', size: 1 });
+    const p = race.player, side = race.pit.side, mid = track.length - 120;
+    place(race, mid, side * (race.pit.fast)); stepRace(race, 1 / 120, idle);
+    expect(p.inPitLane).toBe(false);
+    expect(Math.abs(p.lateral)).toBeLessThanOrEqual(track.width / 2 + track.runoff + 0.01);
+    drive(race, track.length - 700, mid, s => race.pit.centre(s - track.length));
+    expect(p.inPitLane).toBe(true);
+    place(race, mid + 5, 0); stepRace(race, 1 / 120, idle);
+    expect(Math.abs(p.lateral)).toBeGreaterThan(track.width / 2 + track.runoff);
   });
 
   it('pushes overlapping cars apart', () => {

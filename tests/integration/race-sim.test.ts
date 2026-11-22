@@ -29,7 +29,12 @@ describe('strategy', () => {
   it.each([[3, 1], [10, 2]])('in a %i-lap race every car, player included, makes %i compulsory stop(s) and finishes', (laps, stops) => {
     const track = buildTrack(CIRCUITS.find(c => c.id === 'redbullring')!);
     const race = createRace(track, { laps, countdown: 0, player: 'VER' });
-    while (race.racers.some(r => !r.finished) && race.time < 2400) stepRace(race, 1 / 120, aiControls(race.player, race));
+    const used = new Set<string>();
+    while (race.racers.some(r => !r.finished) && race.time < 2400) {
+      stepRace(race, 1 / 120, aiControls(race.player, race));
+      for (const r of race.racers) if (r.inPitLane) used.add(r.code);
+    }
+    expect(used.size).toBe(20); // everyone drove through the pit lane
     for (const r of race.racers) {
       expect(r.finished, r.code).toBe(true);
       expect(r.pits, r.code).toBe(stops);
