@@ -161,3 +161,17 @@ test('pinch and double-tap cannot zoom the page during a race', async ({ page })
   }));
   expect(Object.fromEntries(blocked)).toEqual({ gesturestart: true, gesturechange: true, dblclick: true, touchmove: true });
 });
+
+test('the grid races the Blender-built car model once it has loaded', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?countdown=0');
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carModel), { timeout: 20_000 }).toBe(true);
+  await pickRace(page, { track: 'Monza', team: 'Williams', driver: 'Alexander Albon', laps: 3 });
+  expect(await page.evaluate(() => (window as any).__game.stats().blenderCars)).toBe(20);
+  await page.keyboard.down('ArrowUp');
+  await page.waitForTimeout(1500);
+  await page.keyboard.up('ArrowUp');
+  expect(Number(await page.locator('#speed').textContent())).toBeGreaterThan(50);
+  expect(errors).toEqual([]);
+});
