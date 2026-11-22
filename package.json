@@ -7,7 +7,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "build:car": "node scripts/build-car.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"
