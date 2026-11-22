@@ -11,10 +11,10 @@ import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
 import { createRace, stepRace, standings, DIFFICULTIES, COMPOUNDS, PIT, tyreLife, type Race } from './race';
 import { makeCrew, makePodium, PODIUM_STEPS } from './scene';
-import { People, type Person } from './people';
+import { People, SKIN_TONES, HAIRSTYLES, HAIR_COLOURS, type Person, type PersonStyle } from './people';
 import { pitTimeline } from './pitstop';
 import { reachWith } from './ik';
-import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
+import { type Look, CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, buildFloodlights, makeCar, makeRain, type City } from './scene';
@@ -238,8 +238,16 @@ const SAVE = 'herbie-f1-career';
 let mode: 'quick' | 'career' = 'quick';
 let career: Career | null = (() => { try { return JSON.parse(localStorage.getItem(SAVE) ?? 'null'); } catch { return null; } })();
 function saveCareer() { try { if (career) localStorage.setItem(SAVE, JSON.stringify(career)); else localStorage.removeItem(SAVE); } catch { /* private mode: career lasts this visit */ } }
-const draft = { difficulty: 3, laps: 15 };
+const draft = { difficulty: 3, laps: 15, look: { skin: 0, hair: 0, hairColor: 0 } as Look };
+/** How a driver with this look appears out of the car, in a team's colours. */
+const lookStyle = (look: Look, suit: number, gloves = 0x16171a): PersonStyle =>
+  ({ suit, gloves, skin: SKIN_TONES[look.skin], hair: look.hair, hairColor: HAIR_COLOURS[look.hairColor].color });
 function renderCareerNew() {
+  const L = draft.look, again = renderCareerNew;
+  pills('c-hair', HAIRSTYLES, L.hair, i => { L.hair = i; }, again);
+  pills('c-haircol', HAIR_COLOURS.map(c => c.name), L.hairColor, i => { L.hairColor = i; }, again);
+  pills('c-skin', SKIN_TONES.map(() => ''), L.skin, i => { L.skin = i; }, again);
+  [...$('c-skin').children].forEach((b, i) => { (b as HTMLElement).style.background = hex(SKIN_TONES[i]); b.setAttribute('aria-label', `Skin tone ${i + 1}`); });
   pills('c-diff', DIFFICULTIES.map(d => d.name), draft.difficulty, i => { draft.difficulty = i; }, renderCareerNew);
   pills('c-laps', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(draft.laps), i => { draft.laps = LAP_CHOICES[i]; }, renderCareerNew);
 }
@@ -254,7 +262,7 @@ $('c-next').onclick = () => {
   $('career-error').textContent = problem ?? '';
   if (problem) return;
   $('c-teamlist').replaceChildren(...TEAMS.map(t => teamCard(t, () => {
-    career = newCareer({ name, number: num, team: t.name, difficulty: draft.difficulty, laps: draft.laps });
+    career = newCareer({ name, number: num, team: t.name, difficulty: draft.difficulty, laps: draft.laps, look: { ...draft.look } });
     saveCareer();
     playContract(t, `Welcome to ${t.name}`, `${name} · #${num} · age 17 · season 1`);
   }, esc(t.name), `Replace ${esc(t.drivers[1].name)}`)));
@@ -303,15 +311,18 @@ $('continue').onclick = () => (seasonOver(career!) ? showReview() : showHub());
 function playContract(t: Team, title: string, sub: string) {
   const car = makeCar(t, career?.number ?? 1), box = pitBox(track, TEAMS.indexOf(t));
   car.position.set(box.x, 0, box.z); scene.add(car);
+  // the new signing, in the team's kit, next to the car
+  const me = people && career ? people.make(lookStyle(career.look ?? draft.look, t.livery[0], t.livery[1])) : null;
+  if (me) { me.root.position.set(box.x + Math.sin(box.heading) * 2.4, 0, box.z - Math.cos(box.heading) * 2.4); me.root.rotation.y = Math.PI / 2 - box.heading + 0.6; me.play('Idle_Talking_Loop', 0); scene.add(me.root); }
   playCut({
     length: 6,
     update(time) {
-      car.rotation.y = time * 0.6;
+      car.rotation.y = time * 0.6; me?.update(1 / 60);
       const a = -box.heading + 0.8;
       camera.position.set(box.x + Math.cos(a) * 8, 2.2, box.z + Math.sin(a) * 8);
       camera.lookAt(box.x, 0.6, box.z);
     },
-    end() { scene.remove(car); showHub(); },
+    end() { scene.remove(car); if (me) scene.remove(me.root); showHub(); },
   }, title, sub);
 }
 document.querySelectorAll<HTMLElement>('[data-back]').forEach(b => { b.onclick = () => showMenu(b.dataset.back!); });
@@ -567,7 +578,7 @@ function playPodium() {
   const podium = makePodium(top.map(r => r.color), !people);
   // the top three in their race suits: winner dancing, the others celebrating and chatting
   const celebrants = people ? top.map((r, k) => {
-    const m = people!.make({ suit: r.team.livery[0], gloves: r.team.livery[1] });
+    const m = people!.make(r.isPlayer && mode === 'career' && career ? lookStyle(career.look ?? draft.look, r.team.livery[0], r.team.livery[1]) : { suit: r.team.livery[0], gloves: r.team.livery[1] });
     const [z, h] = PODIUM_STEPS[k];
     m.root.position.set(0, h, z); m.root.rotation.y = Math.PI / 2; // model faces +z; podium front is +x
     m.play(['Dance_Loop', 'Jump_Loop', 'Idle_Talking_Loop'][k], 0); m.update(k * 0.7);
@@ -777,6 +788,29 @@ function updateDriver(dt: number) {
   }
 }
 
+// --- the career driver preview: its own little renderer beside the form ---
+const avatar = (() => {
+  let r: THREE.WebGLRenderer | null = null, person: Person | null = null, key = '', spin = 0;
+  const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(30, 240 / 300, 0.1, 20);
+  sc.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.4));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.2); keyLight.position.set(1.5, 3, 2.5); sc.add(keyLight);
+  cam.position.set(0, 1.42, 2.3); cam.lookAt(0, 1.3, 0);
+  return {
+    update(dt: number) {
+      if (!people || $('career-new').classList.contains('hidden')) return;
+      r ??= new THREE.WebGLRenderer({ canvas: $('c-avatar') as HTMLCanvasElement, antialias: true, alpha: true });
+      r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1;
+      const k = JSON.stringify(draft.look);
+      if (k !== key) {
+        key = k; if (person) sc.remove(person.root);
+        person = people.make(lookStyle(draft.look, 0xe10600, 0x111111)); person.play('Idle_Loop', 0); sc.add(person.root);
+      }
+      spin += dt * 0.5; person!.root.rotation.y = Math.sin(spin) * 0.6;
+      person!.update(dt); r.render(sc, cam);
+    },
+  };
+})();
+
 // --- loop ---
 let camYaw = 0, acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
@@ -789,6 +823,7 @@ function frame(now: number) {
     aimSun(p.x, p.z);
     if (cut) { cut.t += dt; cut.update(cut.t); if (cut.t >= cut.length) endCut(); }
     composer.render(dt);
+    avatar.update(dt);
     requestAnimationFrame(frame);
     return;
   }

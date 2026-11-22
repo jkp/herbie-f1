@@ -139,6 +139,11 @@
     #tyrebtns button { font: 700 20px 'Titillium Web', system-ui, sans-serif; color: #fff; background: #1f2937; border: 4px solid; border-radius: 999px;
       width: 80px; height: 80px; touch-action: manipulation; cursor: pointer; }
     #tyrebtns button[aria-pressed=true] { background: #475569; box-shadow: 0 0 0 3px #fff; }
+    .looks { display: flex; gap: 18px; align-items: center; justify-content: center; flex-wrap: wrap; margin-bottom: 6px; }
+    #c-avatar { width: 200px; height: 250px; border-radius: 14px; background: radial-gradient(circle at 50% 35%, #2b3242, #11141b); }
+    .swatches button { width: 40px; height: 40px; padding: 0 !important; }
+    .swatches button[aria-pressed=true] { box-shadow: 0 0 0 3px #facc15; }
+    .overlay { overflow-y: auto; justify-content: safe center; }
     .hidden { display: none !important; }
     @media (max-width: 700px) { #tower { display: none; } #map { display: none; } }
   </style>
@@ -217,6 +222,17 @@
       <div class="form">
         <label>Driver name <input id="c-name" maxlength="20" autocomplete="off" /></label>
         <label>Race number <input id="c-number" type="number" min="2" max="99" inputmode="numeric" value="17" /></label>
+      </div>
+      <div class="looks">
+        <canvas id="c-avatar" width="240" height="300" aria-label="Your driver"></canvas>
+        <div>
+          <h3>Skin tone</h3>
+          <div id="c-skin" class="pills swatches"></div>
+          <h3>Hair</h3>
+          <div id="c-hair" class="pills"></div>
+          <h3>Hair colour</h3>
+          <div id="c-haircol" class="pills"></div>
+        </div>
       </div>
       <h3>Difficulty</h3>
       <div id="c-diff" class="pills"></div>
