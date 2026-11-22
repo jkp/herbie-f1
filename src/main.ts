@@ -11,7 +11,7 @@ import { reachWith } from './ik';
 import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
-import { buildWorld, makeCar, type City } from './scene';
+import { buildWorld, makeCar, loadCarModel, carModelLoaded, type City } from './scene';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
@@ -619,6 +619,9 @@ function startSimplePitScene() {
   }, 'PIT STOP', `${p.team.name} crew · new tyres`);
 }
 
+// --- the Blender car: loaded in the background; races started before it arrives use the procedural car ---
+loadCarModel().catch(e => console.warn('car model unavailable', e));
+
 // --- people: loaded in the background; until then the old stand-ins are used ---
 let people: People | null = null;
 People.load().then(p => { people = p; if (race && !driverRig) seatDriver(); }).catch(e => console.warn('people models unavailable', e));
@@ -764,4 +767,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people, carModel: carModelLoaded(), blenderCars: carMeshes.filter(m => m.userData.blender).length }), three: { renderer, scene, sky } } });

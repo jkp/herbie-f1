@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import carUrl from './assets/car.glb?url';
 import { pointAt, project, type Track } from './track';
 import { PIT, pitBox, pitLane, pitSide } from './race';
 import { TEAMS, type Team } from './grid';
@@ -534,8 +537,60 @@ function carGeometry() {
   return { body: merged(body), accent: merged(accent), carbon: merged(carbon), frontTyre: tyreGeo(0.36, 0.3), rearTyre: tyreGeo(0.36, 0.4) };
 }
 
+// The car modelled in Blender (scripts/blender/make_car.py). Until it has loaded, and in node tests, makeCar builds
+// the procedural stand-in below.
+let carModel: THREE.Group | null = null;
+export async function loadCarModel() {
+  carModel ??= (await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(carUrl)).scene;
+}
+export const carModelLoaded = () => !!carModel;
+
 /** F1 car in the team's 2022 colours, nose along +x. */
 export function makeCar(team: Team, number: number) {
+  return carModel ? modelCar(carModel, team, number) : proceduralCar(team, number);
+}
+
+const numberContrast = (acc: number) => (new THREE.Color(acc).getHSL({ h: 0, s: 0, l: 0 }).l > 0.5 ? '#111' : '#fff');
+let sharedCarMats: Record<string, THREE.Material> | null = null;
+function modelCar(model: THREE.Group, team: Team, number: number) {
+  const [main, acc] = team.livery;
+  const painted = (color: number) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.45, clearcoat: 0.5, clearcoatRoughness: 0.2, vertexColors: true });
+  // the body carries baked ambient occlusion as vertex colours; the wheels and helmet don't
+  const own: Record<string, THREE.Material> = {
+    paint: painted(main), accent: painted(acc),
+    stripe: new THREE.MeshStandardMaterial({ color: 0xd9262c, roughness: 0.6 }), // soft-compound sidewall, recoloured per frame
+    helmet: new THREE.MeshPhysicalMaterial({ color: acc, clearcoat: 1, roughness: 0.3 }),
+  };
+  const shared = sharedCarMats ??= {
+    carbon: new THREE.MeshStandardMaterial({ color: 0x1c1d21, roughness: 0.45, metalness: 0.3, vertexColors: true }),
+    tyre: new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.92 }),
+    rim: new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.3, metalness: 0.85 }),
+    visor: new THREE.MeshStandardMaterial({ color: 0x0b0b0f, roughness: 0.1, metalness: 0.8 }),
+  };
+  const car = model.clone();
+  car.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.material = own[(m.material as THREE.Material).name] ?? shared[(m.material as THREE.Material).name] ?? m.material;
+    m.castShadow = true;
+  });
+  // race number on the nose, at the spot the model marks
+  const numMat = new THREE.MeshBasicMaterial({ map: numberTexture(number, numberContrast(acc)), transparent: true });
+  const num = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26), numMat); num.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);
+  car.getObjectByName('number')!.add(num);
+  // each wheel spins about its own z inside a pivot at the hub that steers about y
+  const wheels: THREE.Object3D[] = [], front: THREE.Group[] = [];
+  for (const name of ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR']) {
+    const wheel = car.getObjectByName(name)!, pivot = new THREE.Group();
+    pivot.position.copy(wheel.position); wheel.position.set(0, 0, 0);
+    pivot.add(wheel); car.add(pivot);
+    wheels.push(wheel); if (name[6] === 'F') front.push(pivot);
+  }
+  car.userData = { wheels, front, helmet: [car.getObjectByName('helmet')!, car.getObjectByName('visor')!], stripe: own.stripe, blender: true };
+  return car;
+}
+
+function proceduralCar(team: Team, number: number) {
   const car = new THREE.Group(), geo = carGeoCache ??= carGeometry();
   const [main, acc] = team.livery;
   const paint = new THREE.MeshPhysicalMaterial({ color: main, roughness: 0.45, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.2 });
@@ -545,7 +600,7 @@ export function makeCar(team: Team, number: number) {
     const mesh = new THREE.Mesh(g, m); mesh.castShadow = true; car.add(mesh);
   }
   // race number on the nose and engine cover
-  const numMat = new THREE.MeshBasicMaterial({ map: numberTexture(number, new THREE.Color(acc).getHSL({ h: 0, s: 0, l: 0 }).l > 0.5 ? '#111' : '#fff'), transparent: true });
+  const numMat = new THREE.MeshBasicMaterial({ map: numberTexture(number, numberContrast(acc)), transparent: true });
   const nose = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), numMat); nose.rotation.x = -Math.PI / 2; nose.rotation.z = -Math.PI / 2; nose.position.set(2.2, 0.47, 0); car.add(nose);
   // driver's helmet in the accent colour with a dark visor
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), new THREE.MeshPhysicalMaterial({ color: acc, clearcoat: 1, roughness: 0.3 }));
