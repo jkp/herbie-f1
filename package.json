@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",
-    "build:car": "node scripts/build-car.mjs"
+    "build:car": "node scripts/build-car.mjs",
+    "build:trees": "node scripts/build-trees.mjs"
   },
   "dependencies": {
     "three": "^0.187.0"
