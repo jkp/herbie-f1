@@ -161,3 +161,15 @@ test('pinch and double-tap cannot zoom the page during a race', async ({ page })
   }));
   expect(Object.fromEntries(blocked)).toEqual({ gesturestart: true, gesturechange: true, dblclick: true, touchmove: true });
 });
+
+test('Spa is real 3D: the car climbs out of Eau Rouge up Raidillon, through dense forest', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Spa', team: 'Ferrari', driver: 'Charles Leclerc', laps: 3 });
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().forest), { timeout: 15_000 }).toBeGreaterThan(15000);
+  await page.evaluate(() => (window as any).__game.place(900, 0)); // the dip at Eau Rouge
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carY)).toBeLessThan(-15);
+  const dip = await page.evaluate(() => (window as any).__game.stats().carY);
+  await page.keyboard.down('ArrowUp');
+  await expect.poll(() => page.evaluate(() => (window as any).__game.stats().carY), { timeout: 10_000 }).toBeGreaterThan(dip + 15);
+  await page.keyboard.up('ArrowUp');
+});
