@@ -74,6 +74,15 @@ function resize() {
 // --- time of day and weather ---
 let timeOfDay = 1, weather = 0;
 const rain = makeRain(); rain.visible = false; scene.add(rain);
+// see-through effects that must not cast ambient occlusion: hidden while that pass reads the depth
+const seeThrough: THREE.Object3D[] = [rain];
+if (ao) {
+  const aoRender = ao.render.bind(ao);
+  ao.render = (...a: Parameters<GTAOPass['render']>) => {
+    const was = seeThrough.map(o => o.visible); seeThrough.forEach(o => { o.visible = false; });
+    aoRender(...a); seeThrough.forEach((o, k) => { o.visible = was[k]; });
+  };
+}
 let lit: { time: number; weather: number } | null = null;
 /** Sky, sun, ambient light, fog, floodlights, rain and wet tarmac for a time of day and weather. */
 function applyConditions(time: number, wx: number) {
@@ -159,7 +168,13 @@ function newRace() {
     ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career), tyre: startTyre, weather })
     : createRace(track, { ...OPTS, player: driver, difficulty, laps, tyre: startTyre, weather });
   applyConditions(timeOfDay, weather);
-  carMeshes = race.racers.map(r => { const m = makeCar(r.team, r.number); scene.add(m); return m; });
+  carMeshes = race.racers.map(r => {
+    const m = makeCar(r.team, r.number);
+    // the red light under the rear wing that flashes in the wet
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.16), new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xff1010, emissiveIntensity: 0 }));
+    light.position.set(-2.32, 0.5, 0); m.add(light); m.userData.rainLight = light.material;
+    scene.add(m); return m;
+  });
   seatDriver();
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
@@ -811,6 +826,46 @@ const avatar = (() => {
   };
 })();
 
+// --- spray: misty puffs thrown up behind each car's rear wheels in the rain ---
+const spray = (() => {
+  const N = 900, tex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d')!, grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,0.55)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+  })();
+  const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, color: 0xeef2f6, transparent: true, depthWrite: false, opacity: 0.5 }), N);
+  mesh.frustumCulled = false; mesh.count = 0; scene.add(mesh); seeThrough.push(mesh);
+  const P = Array.from({ length: N }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 9, life: 1 }));
+  let next = 0;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  return {
+    update(dt: number, raining: boolean) {
+      if (raining) for (const r of race.racers) {
+        const c = r.car, sp = Math.abs(c.speed);
+        if (sp < 12 || r.pitTimer > 0) continue;
+        const fx = Math.cos(c.heading), fz = Math.sin(c.heading);
+        for (let k = 0; k < Math.min(3, sp / 20); k++) {
+          const p = P[next]; next = (next + 1) % N;
+          const side = (k % 2 ? 1 : -1) * 0.8;
+          Object.assign(p, { x: c.x - fx * 2.2 - fz * side, y: 0.3, z: c.z - fz * 2.2 + fx * side,
+            vx: fx * sp * 0.35 + (Math.random() - 0.5) * 2, vy: 1.5 + Math.random() * 2, vz: fz * sp * 0.35 + (Math.random() - 0.5) * 2, age: 0, life: 0.5 + Math.random() * 0.5 });
+        }
+      }
+      let n = 0;
+      q.copy(camera.quaternion);
+      for (const p of P) {
+        if (p.age >= p.life) continue;
+        p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.vx *= 0.96; p.vz *= 0.96;
+        const k = p.age / p.life, s = 0.8 + k * 3.2;
+        mesh.setMatrixAt(n++, m.compose(v.set(p.x, p.y, p.z), q, sc.set(s, s * 0.7, s)));
+      }
+      mesh.count = n; mesh.instanceMatrix.needsUpdate = true;
+      (mesh.material as THREE.MeshBasicMaterial).opacity = 0.35;
+    },
+  };
+})();
+
 // --- loop ---
 let camYaw = 0, acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
@@ -839,6 +894,7 @@ function frame(now: number) {
     for (const w of m.userData.wheels as THREE.Mesh[]) w.rotation.z -= car.speed * dt / 0.36;
     for (const f of m.userData.front as THREE.Group[]) f.rotation.y = -car.steer * maxSteerAngle(car.speed) * 2;
     (m.userData.stripe as THREE.MeshStandardMaterial).color.setHex(COMPOUNDS[r.compound].color);
+    (m.userData.rainLight as THREE.MeshStandardMaterial).emissiveIntensity = rain.visible && Math.floor(now / 250) % 2 ? 4 : 0;
   });
   updateDriver(dt);
 
@@ -873,6 +929,7 @@ function frame(now: number) {
 
   updateHud(dt);
   audio.update(gearFor(c.speed).rpm, ctl.throttle);
+  spray.update(dt, rain.visible);
   if (rain.visible) { const u = (rain.material as THREE.ShaderMaterial).uniforms; u.uTime.value = now / 1000; u.uCam.value.copy(camera.position); }
   composer.render(dt);
   requestAnimationFrame(frame);
