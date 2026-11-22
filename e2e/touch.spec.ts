@@ -59,7 +59,7 @@ test('TILT steers by turning the iPad like a steering wheel', async ({ page }) =
   const gas = (await page.locator('[data-ctl=gas]').boundingBox())!;
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: gas.x + gas.width / 2, y: gas.y + gas.height / 2, id: 1 }] });
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(300); // rolling, but too slow to spin off when we steer hard
   for (let k = 0; k < 10; k++) { await motion(25); await page.waitForTimeout(50); }
   expect(await page.evaluate(() => (window as any).__game.race.player.car.steer)).toBeGreaterThan(0.5);
   for (let k = 0; k < 10; k++) { await motion(-25); await page.waitForTimeout(50); }
