@@ -14,6 +14,7 @@ import { makeCrew, makePodium, PODIUM_STEPS } from './scene';
 import { People, SKIN_TONES, HAIRSTYLES, HAIR_COLOURS, type Person, type PersonStyle } from './people';
 import { pitTimeline } from './pitstop';
 import { reachWith } from './ik';
+import { wheelAngle, tiltSteer } from './tilt';
 import { type Look, CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
@@ -393,6 +394,26 @@ touchLayer.addEventListener('pointercancel', liftFinger);
 touchLayer.querySelector('[data-act=cam]')!.addEventListener('pointerdown', () => { camMode = (camMode + 1) % 3; });
 touchLayer.querySelector('[data-act=box]')!.addEventListener('pointerdown', toggleBox);
 touchLayer.querySelector('[data-act=reset]')!.addEventListener('pointerdown', () => { if (screen === 'race') resetPlayer(); });
+// TILT: steer by turning the iPad like a steering wheel. iPad asks for motion permission on the first tap; however it's
+// held when switched on is straight ahead.
+const tilt = { on: false, zero: null as number | null, steer: 0 };
+const tiltBtn = touchLayer.querySelector<HTMLElement>('[data-act=tilt]')!;
+tiltBtn.addEventListener('click', async () => {
+  if (!tilt.on) {
+    const ask = (DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission;
+    if (ask && await ask().catch(() => 'denied') !== 'granted') { flash('MOTION NOT ALLOWED'); return; }
+  }
+  tilt.on = !tilt.on; tilt.zero = null; tilt.steer = 0;
+  tiltBtn.classList.toggle('on', tilt.on); tiltBtn.setAttribute('aria-pressed', String(tilt.on));
+  if (tilt.on) flash('TILT TO STEER');
+});
+addEventListener('devicemotion', e => {
+  if (!tilt.on || !e.accelerationIncludingGravity) return;
+  const angle = wheelAngle(e.accelerationIncludingGravity, window.screen.orientation?.angle ?? Number((window as { orientation?: number }).orientation ?? 0)) // older iPads only have window.orientation;
+  if (angle == null) { tilt.steer = 0; return; }
+  tilt.zero ??= angle;
+  tilt.steer = tiltSteer(angle, tilt.zero);
+});
 // iPad Safari ignores user-scalable=no, so two thumbs on the controls pinch-zoom the page and touch-action:none then stops you zooming back out.
 const noZoom = (e: Event) => e.preventDefault();
 for (const type of ['gesturestart', 'gesturechange', 'dblclick']) document.addEventListener(type, noZoom, { passive: false });
@@ -409,6 +430,7 @@ function readControls(): Controls {
   if (held.has('gas')) ctl.throttle = 1;
   if (held.has('brake')) ctl.brake = 1;
   if (held.size) ctl.steer += (held.has('right') ? 1 : 0) - (held.has('left') ? 1 : 0);
+  if (tilt.on) ctl.steer = Math.max(-1, Math.min(1, ctl.steer + tilt.steer));
   const pad = navigator.getGamepads?.().find(p => p);
   if (pad) {
     const ax = pad.axes[0] ?? 0;
