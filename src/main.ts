@@ -265,6 +265,10 @@ touchLayer.addEventListener('pointercancel', liftFinger);
 touchLayer.querySelector('[data-act=cam]')!.addEventListener('pointerdown', () => { camMode = (camMode + 1) % 3; });
 touchLayer.querySelector('[data-act=box]')!.addEventListener('pointerdown', toggleBox);
 touchLayer.querySelector('[data-act=reset]')!.addEventListener('pointerdown', () => { if (screen === 'race') resetPlayer(); });
+// iPad Safari ignores user-scalable=no, so two thumbs on the controls pinch-zoom the page and touch-action:none then stops you zooming back out.
+const noZoom = (e: Event) => e.preventDefault();
+for (const type of ['gesturestart', 'gesturechange', 'dblclick']) document.addEventListener(type, noZoom, { passive: false });
+document.addEventListener('touchmove', e => { if (!document.body.classList.contains('menu')) e.preventDefault(); }, { passive: false });
 
 function readControls(): Controls {
   const k = (...c: string[]) => c.some(x => keys.has(x)) ? 1 : 0;
