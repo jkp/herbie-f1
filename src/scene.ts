@@ -7,6 +7,7 @@ import { pointAt, project, type Track } from './track';
 import { PIT, boxAt, pitBox, pitLane, pitSide } from './race';
 import { makeRelief, type Relief } from './relief';
 import { TEAMS, type Team } from './grid';
+import { plantTrees, speciesMix, type Plant } from './trees';
 
 // Track-space helper: point at index i offset `off` metres to the right of the centreline.
 function side(t: Track, i: number, off: number): [number, number] {
@@ -317,9 +318,9 @@ function buildPitLane(t: Track, pit: ReturnType<typeof pitLane>, barrierMat: THR
   return g;
 }
 
-/** Forest polygons filled with conifers on a jittered grid: dense near the track, thinner deeper in. One mesh per 400 m tile so tiles out of view are culled. */
+/** Forest polygons filled with trees on a jittered grid: dense near the track, thinner deeper in. */
 const FOREST_CAP = 36000;
-function buildForest(forests: number[][][], relief: Relief, clear: (x: number, z: number) => boolean, rnd: () => number) {
+function forestPlants(forests: number[][][], relief: Relief, clear: (x: number, z: number) => boolean, rnd: () => number): Plant[] {
   const G = relief.ground, span = (G.n - 1) * G.step, S = 8.5, cells = Math.ceil(span / S), taken = new Uint8Array(cells * cells);
   const spots: [number, number][] = [];
   for (const rings of forests) {
@@ -345,30 +346,7 @@ function buildForest(forests: number[][][], relief: Relief, clear: (x: number, z
   const ok = spots.filter(([x, z]) => clear(x, z)), near = ok.filter(([x, z]) => relief.margin(x, z) < 250).length;
   const keepFar = Math.min(1, Math.max(0.15, (FOREST_CAP - near) / Math.max(1, ok.length - near)));
   const kept = ok.filter(([x, z]) => relief.margin(x, z) < 250 || rnd() < keepFar).slice(0, FOREST_CAP);
-  // one cheap conifer: open cone crown on a stub of trunk, coloured per vertex
-  const crown = new THREE.ConeGeometry(3.2, 10, 7, 1, true); crown.translate(0, 7, 0);
-  const trunk = new THREE.CylinderGeometry(0.3, 0.4, 2.4, 4, 1, true); trunk.translate(0, 1.2, 0);
-  const paint = (g: THREE.BufferGeometry, c: number) => {
-    const col = new THREE.Color(c), a = new Float32Array(g.attributes.position.count * 3);
-    for (let k = 0; k < a.length; k += 3) { a[k] = col.r; a[k + 1] = col.g; a[k + 2] = col.b; }
-    g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g.toNonIndexed();
-  };
-  const geo = mergeGeometries([paint(crown, 0x2c5a2c), paint(trunk, 0x4a3628)]);
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const tiles = new Map<string, THREE.Matrix4[]>(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  for (const [x, z] of kept) {
-    const s = 0.8 + rnd() * 0.6, key = `${Math.floor(x / 400)},${Math.floor(z / 400)}`;
-    if (!tiles.has(key)) tiles.set(key, []);
-    tiles.get(key)!.push(m.compose(new THREE.Vector3(x, relief.groundY(x, z) - 0.3, z), q.setFromAxisAngle(up, rnd() * 6), new THREE.Vector3(s, s * (0.85 + rnd() * 0.4), s)).clone());
-  }
-  const g = new THREE.Group(), tint = new THREE.Color();
-  for (const list of tiles.values()) {
-    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
-    list.forEach((mm, k) => { mesh.setMatrixAt(k, mm); mesh.setColorAt(k, tint.setHSL(0.25 + rnd() * 0.08, 0.35, 0.4 + rnd() * 0.25)); });
-    mesh.computeBoundingSphere(); g.add(mesh);
-  }
-  g.name = 'forest'; g.userData.count = kept.length;
-  return g;
+  return kept.map(([x, z]) => ({ x, y: relief.groundY(x, z), z, s: 0.75 + rnd() * 0.45 }));
 }
 
 export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }, urban = false, relief: Relief = makeRelief(t)) {
@@ -519,27 +497,19 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   }
   for (const c of keepClear) occupied.add(`${Math.floor(c.x / 40)},${Math.floor(c.z / 40)}`);
 
-  // trees: trunks and layered crowns, scattered away from the circuit and the buildings
-  const G0 = G.x0 + span * 0.075, G1 = G.z0 + span * 0.075, trees: THREE.Matrix4[] = [];
+  // trees: scattered away from the circuit and the buildings
+  const G0 = G.x0 + span * 0.075, G1 = G.z0 + span * 0.075, trees: Plant[] = [];
   for (let k = 0; trees.length < (urban ? 250 : 900) && k < 6000; k++) {
     const x = G0 + rnd() * span * 0.85, z = G1 + rnd() * span * 0.85;
     if (occupied.has(`${Math.floor(x / 40)},${Math.floor(z / 40)}`)) continue;
     if (Math.abs(project(t, x, z).lateral) < edge + 14) continue;
-    const s = 0.7 + rnd() * 0.9;
-    trees.push(new THREE.Matrix4().compose(new THREE.Vector3(x, relief.groundY(x, z) - 0.3, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)));
+    trees.push({ x, y: relief.groundY(x, z), z, s: 0.6 + rnd() * 0.6 });
   }
-  const trunkGeo = new THREE.CylinderGeometry(0.25, 0.4, 4, 6); trunkGeo.translate(0, 2, 0);
-  const crownGeo = mergeGeometries([0, 1, 2].map(k => { const c = new THREE.ConeGeometry(4 - k * 0.9, 5, 8); c.translate(0, 5 + k * 2.6, 0); return c; }));
-  const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 1 }), trees.length);
-  const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({ roughness: 0.95 }), trees.length);
-  trees.forEach((m, k) => { trunks.setMatrixAt(k, m); crowns.setMatrixAt(k, m); crowns.setColorAt(k, new THREE.Color().setHSL(0.27 + rnd() * 0.06, 0.45, 0.2 + rnd() * 0.1)); });
-  world.add(trunks, crowns);
-
-  // the real woods (Spa's Ardennes, Monza's park…), kept off the circuit, the pits, the stands and the buildings
-  const forest = buildForest(city.forests ?? [], relief, (x, z) => relief.margin(x, z) > -6 && !fine.has(`${Math.floor(x / 8)},${Math.floor(z / 8)}`)
+  // and the real woods (Spa's Ardennes, Monza's park…), kept off the circuit, the pits, the stands and the buildings
+  const forest = forestPlants(city.forests ?? [], relief, (x, z) => relief.margin(x, z) > -6 && !fine.has(`${Math.floor(x / 8)},${Math.floor(z / 8)}`)
     && !stands.some(s => Math.hypot(x - s.x, z - s.z) < 50), rnd);
-  world.add(forest);
-  world.userData.trees = trees.length; world.userData.forest = forest.userData.count;
+  world.add(plantTrees([...trees, ...forest], speciesMix(t.name), rnd));
+  world.userData.trees = trees.length; world.userData.forest = forest.length;
   return world;
 }
 
