@@ -394,16 +394,19 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   // the run-off, drawn exactly at road height (the ground mesh is a little lower), then an apron down to the ground mesh.
   // On the inside of a hairpin it stops short of folding over itself; by the pits it reaches back past the garages.
   const reach = (s: number) => (i: number) => s * (s === pitDir && inPits(i) ? pit.box + 22
-    : s === turnSign(i) ? Math.min(edge, Math.max(w + 1.5, 0.9 / t.curvature[i])) : edge);
+    : Math.min(t.room[s > 0 ? 1 : 0][i], s === turnSign(i) ? Math.max(w + 1.5, 0.9 / t.curvature[i]) : edge));
   const uvAt = (x: number, z: number): [number, number] => [(x - G.x0) / span, 1 - (z - G.z0) / span]; // as the ground mesh's
   const level = (i: number) => H[i] - 0.02, toGround = (_: number, x: number, z: number) => relief.groundY(x, z);
   world.add(groundStrip(t, reach(-1), -w, level, level, groundMat, uvAt), groundStrip(t, w, reach(1), level, level, groundMat, uvAt));
-  world.add(groundStrip(t, i => reach(-1)(i) - 10, reach(-1), toGround, level, groundMat, uvAt), groundStrip(t, reach(1), i => reach(1)(i) + 10, level, toGround, groundMat, uvAt));
+  // the apron stops short of a nearby part of the lap's tarmac (which is about twice the room away)
+  const apron = (k: number) => (i: number) => Math.min(10, Math.max(0.5, 2 * t.room[k][i] - w - 0.5 - Math.abs(reach(k ? 1 : -1)(i))));
+  world.add(groundStrip(t, i => reach(-1)(i) - apron(0)(i), reach(-1), toGround, level, groundMat, uvAt), groundStrip(t, reach(1), i => reach(1)(i) + apron(1)(i), level, toGround, groundMat, uvAt));
 
   // gravel traps on the outside of corners
   const gravel = new THREE.MeshStandardMaterial({ map: tex.gravel, roughness: 1 });
-  world.add(strip(t, -w - 2, -w - runoff * 0.75, up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) > 0, undefined, 4));
-  world.add(strip(t, w + 2, w + runoff * 0.75, up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) < 0, undefined, 4));
+  const trap = (k: number) => (i: number) => Math.min(w + runoff * 0.75, t.room[k][i] - 0.5);
+  world.add(strip(t, -w - 2, i => -trap(0)(i), up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) > 0 && trap(0)(i) > w + 3, undefined, 4));
+  world.add(strip(t, w + 2, trap(1), up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) < 0 && trap(1)(i) > w + 3, undefined, 4));
   world.add(strip(t, -w, w, up(0.02), new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.85, name: 'asphalt' }), undefined, undefined, 6));
   const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
   world.add(strip(t, -w + 0.3, -w + 0.55, up(0.03), paint));
@@ -426,7 +429,8 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   const barrierMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
   const ramp = (i: number) => (rel(i) >= PIT.a && rel(i) <= PIT.b) || (rel(i) >= PIT.c && rel(i) <= PIT.d);
   const solid = (s: number) => (i: number) => s !== pitDir || !ramp(i); // the pit lane crosses the barrier line on its ramps
-  for (const s of [-1, 1]) world.add(wall(t, s * edge, up(-2.5), up(1.1), barrierMat, barrierCol, solid(s)));
+  const barrierAt = (s: number) => (i: number) => s * t.room[s > 0 ? 1 : 0][i];
+  for (const s of [-1, 1]) world.add(wall(t, barrierAt(s), up(-2.5), up(1.1), barrierMat, barrierCol, solid(s)));
   const fenceTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 64;
     const g = c.getContext('2d')!; g.strokeStyle = '#d4d4d8'; g.lineWidth = 3;
@@ -434,7 +438,7 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
     const x = new THREE.CanvasTexture(c); x.wrapS = x.wrapT = THREE.RepeatWrapping; x.repeat.set(1, 3); return x;
   })();
   const fence = new THREE.MeshStandardMaterial({ map: fenceTex, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.4, metalness: 0.6 });
-  for (const s of [-1, 1]) world.add(wall(t, s * (edge + 0.3), up(1.1), up(4), fence, undefined, i => !isCorner(i) && solid(s)(i)));
+  for (const s of [-1, 1]) world.add(wall(t, i => barrierAt(s)(i) + s * 0.3, up(1.1), up(4), fence, undefined, i => !isCorner(i) && solid(s)(i)));
   world.add(buildPitLane(t, pit, barrierMat, relief));
 
   // advertising boards on the straights (made-up brands only)

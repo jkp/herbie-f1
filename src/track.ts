@@ -18,6 +18,7 @@ export interface Track {
   cum: Float64Array; // distance from the start line at point i
   length: number;
   curvature: Float64Array; // smoothed |1/radius| at point i
+  room: [Float32Array, Float32Array]; // [left, right]: how far the run-off and barrier reach at point i, up to width/2 + runoff
 }
 
 export function buildTrack(def: TrackDef, step = 2): Track {
@@ -68,7 +69,32 @@ export function buildTrack(def: TrackDef, step = 2): Track {
     for (let j = -w; j <= w; j++) sum += raw[(i + j + n) % n];
     curvature[i] = sum / (2 * w + 1);
   }
-  return { name: def.name, width: def.width, runoff: def.runoff, n, xs, zs, cum, length, curvature };
+  const t = { name: def.name, width: def.width, runoff: def.runoff, n, xs, zs, cum, length, curvature, room: [new Float32Array(n), new Float32Array(n)] as [Float32Array, Float32Array] };
+  sideRoom(t);
+  return t;
+}
+
+/** Where another part of the lap runs close by (a hairpin's other leg, Monaco's twists), the run-off on that side stops
+ *  halfway to it, so a barrier or apron at this part's height never crosses that road. */
+function sideRoom(t: Track) {
+  const w = t.width / 2, edge = w + t.runoff, R = 2 * edge + 4, cell = R, grid = new Map<string, number[]>();
+  const key = (x: number, z: number) => `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
+  for (let i = 0; i < t.n; i++) { const k = key(t.xs[i], t.zs[i]); (grid.get(k) ?? grid.set(k, []).get(k)!).push(i); }
+  for (let i = 0; i < t.n; i++) {
+    const a = (i - 1 + t.n) % t.n, b = (i + 1) % t.n, h = Math.atan2(t.zs[b] - t.zs[a], t.xs[b] - t.xs[a]);
+    const fx = Math.cos(h), fz = Math.sin(h), gx = Math.floor(t.xs[i] / cell), gz = Math.floor(t.zs[i] / cell);
+    let left = edge, right = edge;
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (const j of grid.get(`${gx + dx},${gz + dz}`) ?? []) {
+      const ex = t.xs[j] - t.xs[i], ez = t.zs[j] - t.zs[i], d = Math.hypot(ex, ez), ds = Math.abs(t.cum[i] - t.cum[j]);
+      if (d > R || Math.min(ds, t.length - ds) <= 1.2 * d + 5) continue; // just further along this bit of road
+      const lat = -ex * fz + ez * fx, along = ex * fx + ez * fz;
+      if (Math.abs(along) > Math.abs(lat) + w) continue; // ahead or behind, not off to the side
+      // halfway to the other road's centre, but never onto its tarmac
+      const r = Math.max(w + 0.3, Math.min(Math.abs(lat) / 2, Math.abs(lat) - w - 0.3));
+      if (lat > 0) right = Math.min(right, r); else left = Math.min(left, r);
+    }
+    t.room[0][i] = left; t.room[1][i] = right;
+  }
 }
 
 export const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));

@@ -177,7 +177,7 @@ export function stepRace(race: Race, dt: number, player: Controls) {
     // the walls: track barriers, or the pit lane's own (the boxes widen it between the entry and exit lines)
     const c = pit.centre(rel), [lo, hi] = r.inPitLane
       ? [c - 3.5, rel > PIT.b && rel < PIT.c ? pit.box + 1 : c + 3.5].map(v => v * pit.side).sort((a, b) => a - b)
-      : [-edge - race.runoff, edge + race.runoff];
+      : [-track.room[0][pr.i], track.room[1][pr.i]];
     if (pr.lateral < lo || pr.lateral > hi) {
       // hit the barrier: put the car back inside it and scrape along it, losing speed the harder the impact
       const p = pointAt(track, pr.s), side = Math.max(lo, Math.min(hi, pr.lateral));
