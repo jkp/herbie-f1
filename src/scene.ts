@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { pointAt, project, type Track } from './track';
-import { PIT, pitBox, pitLane, pitSide } from './race';
+import { PIT, boxAt, pitBox, pitLane, pitSide } from './race';
+import { makeRelief, type Relief } from './relief';
 import { TEAMS, type Team } from './grid';
 
 // Track-space helper: point at index i offset `off` metres to the right of the centreline.
@@ -53,7 +54,7 @@ type Offset = number | ((i: number) => number); // metres right of the centrelin
 const at = (o: Offset, i: number) => (typeof o === 'number' ? o : o(i));
 
 /** A flat strip following the lap between lateral offsets `inner` and `outer`. UV: u across, v along (one unit per `vScale` m). */
-function strip(t: Track, inner: Offset, outer: Offset, y: number, mat: THREE.Material, keep: (i: number) => boolean = () => true,
+function strip(t: Track, inner: Offset, outer: Offset, y: Offset, mat: THREE.Material, keep: (i: number) => boolean = () => true,
   colorAt?: (i: number) => THREE.Color, vScale = 10) {
   const pos: number[] = [], uv: number[] = [], col: number[] = [];
   for (let i = 0; i < t.n; i++) {
@@ -61,7 +62,8 @@ function strip(t: Track, inner: Offset, outer: Offset, y: number, mat: THREE.Mat
     const j = (i + 1) % t.n, v0 = t.cum[i] / vScale, v1 = (j ? t.cum[j] : t.length) / vScale;
     const [ax, az] = side(t, i, at(inner, i)), [bx, bz] = side(t, i, at(outer, i)), [cx, cz] = side(t, j, at(inner, j)), [dx, dz] = side(t, j, at(outer, j));
     // wound so the face points up (+y)
-    pos.push(ax, y, az, bx, y, bz, cx, y, cz, bx, y, bz, dx, y, dz, cx, y, cz);
+    const yi = at(y, i), yj = at(y, j);
+    pos.push(ax, yi, az, bx, yi, bz, cx, yj, cz, bx, yi, bz, dx, yj, dz, cx, yj, cz);
     uv.push(0, v0, 1, v0, 0, v1, 1, v0, 1, v1, 0, v1);
     if (colorAt) { const c = colorAt(i); for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b); }
   }
@@ -75,12 +77,13 @@ function strip(t: Track, inner: Offset, outer: Offset, y: number, mat: THREE.Mat
 }
 
 /** A vertical band following the lap at lateral offset `off`, from y0 to y1. */
-function wall(t: Track, off: Offset, y0: number, y1: number, mat: THREE.Material, colorAt?: (i: number) => THREE.Color, keep: (i: number) => boolean = () => true) {
+function wall(t: Track, off: Offset, y0: Offset, y1: Offset, mat: THREE.Material, colorAt?: (i: number) => THREE.Color, keep: (i: number) => boolean = () => true) {
   const pos: number[] = [], uv: number[] = [], col: number[] = [];
   for (let i = 0; i < t.n; i++) {
     if (!keep(i)) continue;
     const j = (i + 1) % t.n, [ax, az] = side(t, i, at(off, i)), [bx, bz] = side(t, j, at(off, j)), u0 = t.cum[i] / 3, u1 = (j ? t.cum[j] : t.length) / 3;
-    pos.push(ax, y0, az, bx, y0, bz, ax, y1, az, ax, y1, az, bx, y0, bz, bx, y1, bz);
+    const a0 = at(y0, i), a1 = at(y1, i), b0 = at(y0, j), b1 = at(y1, j);
+    pos.push(ax, a0, az, bx, b0, bz, ax, a1, az, ax, a1, az, bx, b0, bz, bx, b1, bz);
     uv.push(u0, 0, u1, 0, u0, 1, u0, 1, u1, 0, u1, 1);
     if (colorAt) { const c = colorAt(i); for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b); }
   }
@@ -90,6 +93,24 @@ function wall(t: Track, off: Offset, y0: number, y1: number, mat: THREE.Material
   if (colorAt) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.computeVertexNormals();
   return new THREE.Mesh(g, mat);
+}
+
+/** Ground between lateral offsets `inner` and `outer`, each edge at its own height, textured in world space like the ground mesh. */
+function groundStrip(t: Track, inner: Offset, outer: Offset, yIn: (i: number, x: number, z: number) => number, yOut: (i: number, x: number, z: number) => number,
+  mat: THREE.Material, uvAt: (x: number, z: number) => [number, number], keep: (i: number) => boolean = () => true) {
+  const pos: number[] = [], uv: number[] = [];
+  for (let i = 0; i < t.n; i++) {
+    if (!keep(i)) continue;
+    const j = (i + 1) % t.n, a = side(t, i, at(inner, i)), b = side(t, i, at(outer, i)), c = side(t, j, at(inner, j)), d = side(t, j, at(outer, j));
+    const A = [a[0], yIn(i, ...a), a[1]], B = [b[0], yOut(i, ...b), b[1]], C = [c[0], yIn(j, ...c), c[1]], D = [d[0], yOut(j, ...d), d[1]];
+    for (const v of [A, B, C, B, D, C]) { pos.push(v[0], v[1], v[2]); uv.push(...uvAt(v[0], v[2])); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat); m.receiveShadow = true;
+  return m;
 }
 
 /** Where grandstands go: along the start straight (away from the pits) and on the outside of the big corners. */
@@ -153,7 +174,7 @@ function grandstand(rnd: () => number, fans: { m: THREE.Matrix4; shirt: THREE.Co
 }
 
 /** Real surroundings from OpenStreetMap: building footprints `[height, x0, z0, x1, z1, …]` and tunnel ranges `[s0, s1]`. */
-export interface City { buildings: number[][]; tunnels: number[][] }
+export interface City { buildings: number[][]; tunnels: number[][]; forests?: number[][][] } // forests: [outer, ...holes] rings of [x0, z0, …]
 
 function facadeTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -167,7 +188,7 @@ function facadeTexture() {
 }
 
 /** One mesh of walls (windows, one per ~4 m and per floor) and one of roofs, tinted per building. */
-function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
+function buildCity(buildings: number[][], urban: boolean, rnd: () => number, ground: (x: number, z: number) => number) {
   const wall = { pos: [] as number[], nrm: [] as number[], uv: [] as number[], col: [] as number[] };
   const roof = { pos: [] as number[], nrm: [] as number[], col: [] as number[] };
   const palette = (urban ? [0xf3e6c8, 0xe9cfa3, 0xf2d0b5, 0xffffff, 0xe8dcc4, 0xd9b38c, 0xf5e1a4, 0xf0c8a0] : [0xd6d3cd, 0xbfb8ad, 0xe5e1da, 0xa8a29e, 0xc9c2b8]).map(c => new THREE.Color(c));
@@ -177,6 +198,8 @@ function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
     for (let k = 1; k < b.length; k += 2) pts.push([b[k], b[k + 1]]);
     const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
     const col = h > 40 ? new THREE.Color(0xaebfcc) : palette[Math.floor(rnd() * palette.length)];
+    // on a slope: the base at the lowest ground under the footprint (sunk a little), the roof the building's height above the middle
+    const gs = pts.map(([x, z]) => ground(x, z)), y0 = Math.min(...gs) - 1, top = (Math.min(...gs) + Math.max(...gs)) / 2 + h;
     let u = 0;
     for (let k = 0; k < pts.length; k++) {
       const [ax, az] = pts[k], [bx, bz] = pts[(k + 1) % pts.length], len = Math.hypot(bx - ax, bz - az);
@@ -184,13 +207,13 @@ function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
       // outward normal: perpendicular to the edge, away from the middle of the building
       let nx = (bz - az) / len, nz = -(bx - ax) / len;
       if (nx * ((ax + bx) / 2 - cx) + nz * ((az + bz) / 2 - cz) < 0) { nx = -nx; nz = -nz; }
-      const quad = [[ax, 0, az, u], [bx, 0, bz, u + len], [bx, h, bz, u + len], [ax, h, az, u]];
+      const quad = [[ax, y0, az, u], [bx, y0, bz, u + len], [bx, top, bz, u + len], [ax, top, az, u]];
       // wind each triangle so its face points along the outward normal: (b - a) × up · n
       const flip = -(bz - az) * nx + (bx - ax) * nz < 0;
       const order = flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3];
       for (const i of order) {
         const [x, y, z, uu] = quad[i];
-        wall.pos.push(x, y, z); wall.nrm.push(nx, 0, nz); wall.uv.push(uu / 4, y / 3.3); wall.col.push(col.r, col.g, col.b);
+        wall.pos.push(x, y, z); wall.nrm.push(nx, 0, nz); wall.uv.push(uu / 4, (y - top) / 3.3); wall.col.push(col.r, col.g, col.b);
       }
       u += len;
     }
@@ -200,7 +223,7 @@ function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
       const [a, bb, c] = [pts[i0], pts[i1], pts[i2]];
       // up-facing: (b - a) × (c - a) must have +y, i.e. clockwise in (x, z)
       const up = (bb[1] - a[1]) * (c[0] - a[0]) - (bb[0] - a[0]) * (c[1] - a[1]) > 0;
-      for (const p of up ? [a, bb, c] : [a, c, bb]) { roof.pos.push(p[0], h, p[1]); roof.nrm.push(0, 1, 0); roof.col.push(rc.r, rc.g, rc.b); }
+      for (const p of up ? [a, bb, c] : [a, c, bb]) { roof.pos.push(p[0], top, p[1]); roof.nrm.push(0, 1, 0); roof.col.push(rc.r, rc.g, rc.b); }
     }
   }
   const geo = (d: { pos: number[]; nrm: number[]; col: number[]; uv?: number[] }) => {
@@ -219,22 +242,23 @@ function buildCity(buildings: number[][], urban: boolean, rnd: () => number) {
 }
 
 /** A covered section: walls, a lit ceiling and the structure on top. */
-function buildTunnel(t: Track, s0: number, s1: number) {
+function buildTunnel(t: Track, s0: number, s1: number, H: Float32Array) {
   const g = new THREE.Group(), edge = t.width / 2 + t.runoff + 0.2, inRange = (i: number) => t.cum[i] >= s0 && t.cum[i] <= s1;
   const concrete = new THREE.MeshStandardMaterial({ color: 0x8f8b84, roughness: 0.95, side: THREE.DoubleSide });
   const outside = new THREE.MeshStandardMaterial({ map: facadeTexture(), color: 0xf0e0c0, roughness: 0.85, side: THREE.DoubleSide });
+  const up = (k: number) => (i: number) => H[i] + k;
   for (const s of [-1, 1]) {
-    const inner = wall(t, s * edge, 0, 6, concrete, undefined, inRange); inner.receiveShadow = true;
-    g.add(inner, wall(t, s * edge, 6, 16, outside, undefined, inRange));
+    const inner = wall(t, s * edge, up(-1), up(6), concrete, undefined, inRange); inner.receiveShadow = true;
+    g.add(inner, wall(t, s * edge, up(6), up(16), outside, undefined, inRange));
   }
-  const ceiling = strip(t, -edge, edge, 6, concrete, inRange); ceiling.castShadow = true;
-  const top = strip(t, -edge, edge, 16, new THREE.MeshStandardMaterial({ color: 0x8a8580, roughness: 0.9 }), inRange); top.castShadow = true;
+  const ceiling = strip(t, -edge, edge, up(6), concrete, inRange); ceiling.castShadow = true;
+  const top = strip(t, -edge, edge, up(16), new THREE.MeshStandardMaterial({ color: 0x8a8580, roughness: 0.9 }), inRange); top.castShadow = true;
   g.add(ceiling, top);
   // strip lights along the ceiling
   const lamps: THREE.Matrix4[] = [];
   for (let i = 0; i < t.n; i += 4) if (inRange(i)) for (const s of [-1, 1]) {
     const [x, z] = side(t, i, s * (edge - 1.5));
-    lamps.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 5.9, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -headingAt(t, i)), new THREE.Vector3(1, 1, 1)));
+    lamps.push(new THREE.Matrix4().compose(new THREE.Vector3(x, H[i] + 5.9, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -headingAt(t, i)), new THREE.Vector3(1, 1, 1)));
   }
   const lampMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 0.08, 0.25), new THREE.MeshStandardMaterial({ color: 0xfff1c4, emissive: 0xffe9a8, emissiveIntensity: 3 }), lamps.length);
   lamps.forEach((m, k) => lampMesh.setMatrixAt(k, m));
@@ -244,29 +268,30 @@ function buildTunnel(t: Track, s0: number, s1: number) {
 }
 
 /** The pit lane: tarmac peeling off the track, lane lines, entry/exit lines, its walls, signs and (hidden) arrows to the entry. */
-function buildPitLane(t: Track, pit: ReturnType<typeof pitLane>, barrierMat: THREE.Material) {
-  const g = new THREE.Group(), w = t.width / 2, d = pit.side, rel = (i: number) => pit.rel(t.cum[i]);
+function buildPitLane(t: Track, pit: ReturnType<typeof pitLane>, barrierMat: THREE.Material, relief: Relief) {
+  const g = new THREE.Group(), w = t.width / 2, d = pit.side, rel = (i: number) => pit.rel(t.cum[i]), H = relief.ys, up = (k: number) => (i: number) => H[i] + k;
   const inLane = (i: number) => rel(i) >= PIT.a && rel(i) <= PIT.d;
   const ramp = (i: number) => inLane(i) && (rel(i) <= PIT.b || rel(i) >= PIT.c);
   const off = (k: number) => (i: number) => d * (pit.centre(rel(i)) + k);
   const span = (a: number, b: number) => [(i: number) => Math.min(off(a)(i), off(b)(i)), (i: number) => Math.max(off(a)(i), off(b)(i))] as const;
   const tex = textures();
-  g.add(strip(t, ...span(-4, 4), 0.015, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.9, color: 0xc9ccd1 }), inLane, undefined, 6));
+  g.add(strip(t, ...span(-4, 4), up(0.015), new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.9, color: 0xc9ccd1 }), inLane, undefined, 6));
   const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
-  for (const k of [-4, 4]) g.add(strip(t, ...span(k - 0.15, k + 0.15), 0.03, paint, i => inLane(i) && pit.centre(rel(i)) + k > w));
+  for (const k of [-4, 4]) g.add(strip(t, ...span(k - 0.15, k + 0.15), up(0.03), paint, i => inLane(i) && pit.centre(rel(i)) + k > w));
   // the speed-limit lines across the lane
-  for (const line of [PIT.b, PIT.c]) g.add(strip(t, ...span(-4, 4), 0.032, paint, i => Math.abs(rel(i) - line) < 1.2));
+  for (const line of [PIT.b, PIT.c]) g.add(strip(t, ...span(-4, 4), up(0.032), paint, i => Math.abs(rel(i) - line) < 1.2));
   // walls either side of the ramps, where they're clear of the track
   const red = new THREE.Color(0xd21f1f), white = new THREE.Color(0xf2f2f2), stripes = (i: number) => ((i >> 1) % 2 ? red : white);
-  g.add(wall(t, off(-4.3), 0, 1.1, barrierMat, stripes, i => ramp(i) && pit.centre(rel(i)) - 4 > w + 1.5));
-  g.add(wall(t, off(4.3), 0, 1.1, barrierMat, stripes, i => ramp(i) && pit.centre(rel(i)) + 4 > w + 3));
+  g.add(wall(t, off(-4.3), up(-2.5), up(1.1), barrierMat, stripes, i => ramp(i) && pit.centre(rel(i)) - 4 > w + 1.5));
+  g.add(wall(t, off(4.3), up(-2.5), up(1.1), barrierMat, stripes, i => ramp(i) && pit.centre(rel(i)) + 4 > w + 3));
   // PIT IN / PIT OUT boards facing the drivers
   const sign = (text: string, r: number, lat: number) => {
     const p = pointAt(t, r), board = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.6), new THREE.MeshStandardMaterial({ map: textTexture(text, '#111827', '#facc15'), side: THREE.DoubleSide }));
-    board.position.set(p.x - Math.sin(p.heading) * lat, 3.2, p.z + Math.cos(p.heading) * lat);
+    const y = relief.trackY(r);
+    board.position.set(p.x - Math.sin(p.heading) * lat, y + 3.2, p.z + Math.cos(p.heading) * lat);
     board.rotation.y = Math.atan2(-Math.cos(p.heading), -Math.sin(p.heading));
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.6, 6), new THREE.MeshStandardMaterial({ color: 0x9ca3af }));
-    post.position.set(board.position.x, 1.3, board.position.z);
+    post.position.set(board.position.x, y + 1.3, board.position.z);
     g.add(board, post);
   };
   sign(d > 0 ? 'PIT IN ▶' : '◀ PIT IN', PIT.a - 120, d * (w + t.runoff - 1));
@@ -281,57 +306,124 @@ function buildPitLane(t: Track, pit: ReturnType<typeof pitLane>, barrierMat: THR
     const r = PIT.a - 250 + k * 30, p = pointAt(t, r), q = pointAt(t, r + 5);
     const ax = p.x - Math.sin(p.heading) * lat(r), az = p.z + Math.cos(p.heading) * lat(r);
     const bx = q.x - Math.sin(q.heading) * lat(r + 5), bz = q.z + Math.cos(q.heading) * lat(r + 5);
-    arrows.setMatrixAt(k, new THREE.Matrix4().compose(new THREE.Vector3(ax, 0.06, az), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(bz - az, bx - ax)), new THREE.Vector3(2, 1, 2)));
+    const pitch = Math.atan(relief.slope(r));
+    arrows.setMatrixAt(k, new THREE.Matrix4().compose(new THREE.Vector3(ax, relief.trackY(r) + 0.06, az), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -Math.atan2(bz - az, bx - ax), pitch)), new THREE.Vector3(2, 1, 2)));
   }
   arrows.computeBoundingSphere(); arrows.name = 'pitArrows'; arrows.visible = false;
   g.add(arrows);
   return g;
 }
 
-export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }, urban = false) {
-  const world = new THREE.Group(), w = t.width / 2, runoff = t.runoff, tex = textures();
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (let i = 0; i < t.n; i++) {
-    minX = Math.min(minX, t.xs[i]); maxX = Math.max(maxX, t.xs[i]); minZ = Math.min(minZ, t.zs[i]); maxZ = Math.max(maxZ, t.zs[i]);
+/** Forest polygons filled with conifers on a jittered grid: dense near the track, thinner deeper in. One mesh per 400 m tile so tiles out of view are culled. */
+const FOREST_CAP = 36000;
+function buildForest(forests: number[][][], relief: Relief, clear: (x: number, z: number) => boolean, rnd: () => number) {
+  const G = relief.ground, span = (G.n - 1) * G.step, S = 8.5, cells = Math.ceil(span / S), taken = new Uint8Array(cells * cells);
+  const spots: [number, number][] = [];
+  for (const rings of forests) {
+    let z0 = Infinity, z1 = -Infinity;
+    for (const r of rings) for (let k = 1; k < r.length; k += 2) { z0 = Math.min(z0, r[k]); z1 = Math.max(z1, r[k]); }
+    // scanline fill, even-odd over the rings so clearings stay clear
+    for (let gj = Math.max(0, Math.ceil((z0 - G.z0) / S)); gj < cells && G.z0 + gj * S <= z1; gj++) {
+      const z = G.z0 + gj * S, xs: number[] = [];
+      for (const r of rings) for (let k = 0; k < r.length; k += 2) {
+        const j = (k + 2) % r.length, az = r[k + 1], bz = r[j + 1];
+        if ((az > z) !== (bz > z)) xs.push(r[k] + (r[j] - r[k]) * (z - az) / (bz - az));
+      }
+      xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2)
+        for (let gi = Math.max(0, Math.ceil((xs[k] - G.x0) / S)); gi < cells && G.x0 + gi * S <= xs[k + 1]; gi++) {
+          if (taken[gj * cells + gi]) continue;
+          taken[gj * cells + gi] = 1;
+          spots.push([G.x0 + gi * S + (rnd() - 0.5) * S * 0.8, z + (rnd() - 0.5) * S * 0.8]);
+        }
+    }
   }
-  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2, size = Math.max(maxX - minX, maxZ - minZ) + 1600;
+  // keep every tree near the track; thin out the deep woods to stay within budget
+  const ok = spots.filter(([x, z]) => clear(x, z)), near = ok.filter(([x, z]) => relief.margin(x, z) < 250).length;
+  const keepFar = Math.min(1, Math.max(0.15, (FOREST_CAP - near) / Math.max(1, ok.length - near)));
+  const kept = ok.filter(([x, z]) => relief.margin(x, z) < 250 || rnd() < keepFar).slice(0, FOREST_CAP);
+  // one cheap conifer: open cone crown on a stub of trunk, coloured per vertex
+  const crown = new THREE.ConeGeometry(3.2, 10, 7, 1, true); crown.translate(0, 7, 0);
+  const trunk = new THREE.CylinderGeometry(0.3, 0.4, 2.4, 4, 1, true); trunk.translate(0, 1.2, 0);
+  const paint = (g: THREE.BufferGeometry, c: number) => {
+    const col = new THREE.Color(c), a = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < a.length; k += 3) { a[k] = col.r; a[k + 1] = col.g; a[k + 2] = col.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g.toNonIndexed();
+  };
+  const geo = mergeGeometries([paint(crown, 0x2c5a2c), paint(trunk, 0x4a3628)]);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const tiles = new Map<string, THREE.Matrix4[]>(), m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  for (const [x, z] of kept) {
+    const s = 0.8 + rnd() * 0.6, key = `${Math.floor(x / 400)},${Math.floor(z / 400)}`;
+    if (!tiles.has(key)) tiles.set(key, []);
+    tiles.get(key)!.push(m.compose(new THREE.Vector3(x, relief.groundY(x, z) - 0.3, z), q.setFromAxisAngle(up, rnd() * 6), new THREE.Vector3(s, s * (0.85 + rnd() * 0.4), s)).clone());
+  }
+  const g = new THREE.Group(), tint = new THREE.Color();
+  for (const list of tiles.values()) {
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((mm, k) => { mesh.setMatrixAt(k, mm); mesh.setColorAt(k, tint.setHSL(0.25 + rnd() * 0.08, 0.35, 0.4 + rnd() * 0.25)); });
+    mesh.computeBoundingSphere(); g.add(mesh);
+  }
+  g.name = 'forest'; g.userData.count = kept.length;
+  return g;
+}
 
-  // street circuits sit on paving, everywhere else on grass
-  const groundMap = (urban ? tex.asphalt : tex.grass).clone(); groundMap.repeat.set(size / (urban ? 12 : 24), size / (urban ? 12 : 24)); groundMap.needsUpdate = true;
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({ map: groundMap, color: urban ? 0xd6d0c4 : 0xffffff, roughness: 1 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.02, cz); ground.receiveShadow = true;
+export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }, urban = false, relief: Relief = makeRelief(t)) {
+  const world = new THREE.Group(), w = t.width / 2, runoff = t.runoff, edge = w + runoff, tex = textures();
+  const H = relief.ys, up = (k: number) => (i: number) => H[i] + k;
+
+  // the ground: a mesh following the real landscape (street circuits sit on paving, everywhere else on grass)
+  const G = relief.ground, span = (G.n - 1) * G.step, rep = span / (urban ? 12 : 24);
+  const groundMap = (urban ? tex.asphalt : tex.grass).clone(); groundMap.repeat.set(rep, rep); groundMap.needsUpdate = true;
+  const groundMat = new THREE.MeshStandardMaterial({ map: groundMap, color: urban ? 0xd6d0c4 : 0xffffff, roughness: 1 });
+  const groundGeo = new THREE.PlaneGeometry(span, span, G.n - 1, G.n - 1);
+  groundGeo.rotateX(-Math.PI / 2); groundGeo.translate(G.x0 + span / 2, 0, G.z0 + span / 2);
+  const gp = groundGeo.attributes.position;
+  for (let k = 0; k < gp.count; k++) gp.setY(k, relief.groundY(gp.getX(k), gp.getZ(k)));
+  groundGeo.computeVertexNormals();
+  const ground = new THREE.Mesh(groundGeo, groundMat); ground.receiveShadow = true; ground.name = 'ground';
   world.add(ground);
 
   const isCorner = (i: number) => t.curvature[i] > 1 / 300;
   const turnSign = (i: number) => Math.sign(Math.sin(headingAt(t, (i + 2) % t.n) - headingAt(t, (i - 2 + t.n) % t.n)));
+  const pit = pitLane(t), pitDir = pit.side, rel = (i: number) => pit.rel(t.cum[i]);
+  const inPits = (i: number) => rel(i) > PIT.a - 30 && rel(i) < PIT.d + 30;
+  // the run-off, drawn exactly at road height (the ground mesh is a little lower), then an apron down to the ground mesh.
+  // On the inside of a hairpin it stops short of folding over itself; by the pits it reaches back past the garages.
+  const reach = (s: number) => (i: number) => s * (s === pitDir && inPits(i) ? pit.box + 22
+    : s === turnSign(i) ? Math.min(edge, Math.max(w + 1.5, 0.9 / t.curvature[i])) : edge);
+  const uvAt = (x: number, z: number): [number, number] => [(x - G.x0) / span, 1 - (z - G.z0) / span]; // as the ground mesh's
+  const level = (i: number) => H[i] - 0.02, toGround = (_: number, x: number, z: number) => relief.groundY(x, z);
+  world.add(groundStrip(t, reach(-1), -w, level, level, groundMat, uvAt), groundStrip(t, w, reach(1), level, level, groundMat, uvAt));
+  world.add(groundStrip(t, i => reach(-1)(i) - 10, reach(-1), toGround, level, groundMat, uvAt), groundStrip(t, reach(1), i => reach(1)(i) + 10, level, toGround, groundMat, uvAt));
+
   // gravel traps on the outside of corners
   const gravel = new THREE.MeshStandardMaterial({ map: tex.gravel, roughness: 1 });
-  world.add(strip(t, -w - 2, -w - runoff * 0.75, 0.008, gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) > 0, undefined, 4));
-  world.add(strip(t, w + 2, w + runoff * 0.75, 0.008, gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) < 0, undefined, 4));
-  world.add(strip(t, -w, w, 0.02, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.85 }), undefined, undefined, 6));
+  world.add(strip(t, -w - 2, -w - runoff * 0.75, up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) > 0, undefined, 4));
+  world.add(strip(t, w + 2, w + runoff * 0.75, up(0.008), gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) < 0, undefined, 4));
+  world.add(strip(t, -w, w, up(0.02), new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.85 }), undefined, undefined, 6));
   const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
-  world.add(strip(t, -w + 0.3, -w + 0.55, 0.03, paint));
-  world.add(strip(t, w - 0.55, w - 0.3, 0.03, paint));
+  world.add(strip(t, -w + 0.3, -w + 0.55, up(0.03), paint));
+  world.add(strip(t, w - 0.55, w - 0.3, up(0.03), paint));
   const white = new THREE.Color(0xf2f2f2), red = new THREE.Color(0xd21f1f), black = new THREE.Color(0x111111);
   const kerbMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5 });
   const kerbCol = (i: number) => ((i >> 1) % 2 ? red : white);
-  world.add(strip(t, -w - 1.4, -w, 0.05, kerbMat, isCorner, kerbCol));
-  world.add(strip(t, w, w + 1.4, 0.05, kerbMat, isCorner, kerbCol));
+  world.add(strip(t, -w - 1.4, -w, up(0.05), kerbMat, isCorner, kerbCol));
+  world.add(strip(t, w, w + 1.4, up(0.05), kerbMat, isCorner, kerbCol));
   // chequered start/finish line: two rows of ten squares
   const chequer = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
   for (let k = 0; k < 10; k++) {
     const a = -w + k * (t.width / 10);
-    world.add(strip(t, a, a + t.width / 10, 0.035, chequer, i => i < 2, i => ((k + i) % 2 ? white : black)));
+    world.add(strip(t, a, a + t.width / 10, up(0.035), chequer, i => i < 2, i => ((k + i) % 2 ? white : black)));
   }
 
-  // barriers: red/white tyre walls at corners, blue/white concrete on straights, catch fence above
+  // barriers: red/white tyre walls at corners, blue/white concrete on straights, catch fence above; their feet reach down into the ground
   const blue = new THREE.Color(0x1d4ed8), grey = new THREE.Color(0xc8ccd2);
   const barrierCol = (i: number) => isCorner(i) ? ((i >> 2) % 2 ? red : white) : (i >> 4) % 2 ? grey : blue;
   const barrierMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
-  const pit = pitLane(t), pitDir = pit.side, rel = (i: number) => pit.rel(t.cum[i]);
   const ramp = (i: number) => (rel(i) >= PIT.a && rel(i) <= PIT.b) || (rel(i) >= PIT.c && rel(i) <= PIT.d);
   const solid = (s: number) => (i: number) => s !== pitDir || !ramp(i); // the pit lane crosses the barrier line on its ramps
-  for (const s of [-1, 1]) world.add(wall(t, s * (w + runoff), 0, 1.1, barrierMat, barrierCol, solid(s)));
+  for (const s of [-1, 1]) world.add(wall(t, s * edge, up(-2.5), up(1.1), barrierMat, barrierCol, solid(s)));
   const fenceTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 64;
     const g = c.getContext('2d')!; g.strokeStyle = '#d4d4d8'; g.lineWidth = 3;
@@ -339,8 +431,8 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
     const x = new THREE.CanvasTexture(c); x.wrapS = x.wrapT = THREE.RepeatWrapping; x.repeat.set(1, 3); return x;
   })();
   const fence = new THREE.MeshStandardMaterial({ map: fenceTex, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.4, metalness: 0.6 });
-  for (const s of [-1, 1]) world.add(wall(t, s * (w + runoff + 0.3), 1.1, 4, fence, undefined, i => !isCorner(i) && solid(s)(i)));
-  world.add(buildPitLane(t, pit, barrierMat));
+  for (const s of [-1, 1]) world.add(wall(t, s * (edge + 0.3), up(1.1), up(4), fence, undefined, i => !isCorner(i) && solid(s)(i)));
+  world.add(buildPitLane(t, pit, barrierMat, relief));
 
   // advertising boards on the straights (made-up brands only)
   const ads = ['HERBIE F1', 'TURBO COLA', 'GRIDLINE', 'APEX TYRES', 'PITLANE FM', 'FAST LAP'].map((s, k) =>
@@ -348,9 +440,9 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   for (let i = 40; i < t.n; i += 90) {
     const s = (i >> 3) % 2 ? 1 : -1;
     if (isCorner(i) || (s === pitDir && rel(i) > PIT.a - 20 && rel(i) < PIT.d + 20)) continue;
-    const [x, z] = side(t, i, s * (w + runoff - 0.6)), h = headingAt(t, i);
+    const [x, z] = side(t, i, s * (edge - 0.6)), h = headingAt(t, i);
     const board = new THREE.Mesh(new THREE.PlaneGeometry(12, 1), ads[(i / 90 | 0) % ads.length]);
-    board.position.set(x, 0.6, z); board.rotation.y = -h + (s > 0 ? Math.PI : 0);
+    board.position.set(x, H[i] + 0.6, z); board.rotation.y = -h + (s > 0 ? Math.PI : 0);
     world.add(board);
   }
 
@@ -360,10 +452,16 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   const headGeo = new THREE.IcosahedronGeometry(0.13, 0); headGeo.translate(0, 0.78, 0);
   const shirtMat = new THREE.MeshStandardMaterial({ roughness: 0.9 }), skinMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
   let fanCount = 0;
-  for (const sp of standSpots(t)) {
+  const stands = standSpots(t);
+  for (const sp of stands) {
     // face the track: local +z must point at it
     const p = project(t, sp.x, sp.z), toTrack = p.lateral > 0 ? sp.heading - Math.PI / 2 : sp.heading + Math.PI / 2;
-    const at = new THREE.Matrix4().compose(new THREE.Vector3(sp.x, 0, sp.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - toTrack), new THREE.Vector3(1, 1, 1));
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - toTrack);
+    // standing on the lowest ground under it
+    const base = Math.min(...[[-36, 1], [36, 1], [-36, -12], [36, -12], [0, -6]].map(([lx, lz]) => {
+      const v = new THREE.Vector3(lx, 0, lz).applyQuaternion(q); return relief.groundY(sp.x + v.x, sp.z + v.z);
+    }));
+    const at = new THREE.Matrix4().compose(new THREE.Vector3(sp.x, base - 0.2, sp.z), q, new THREE.Vector3(1, 1, 1));
     const fans: { m: THREE.Matrix4; shirt: THREE.Color; skin: THREE.Color }[] = [];
     world.add(grandstand(rnd, fans, at));
     const bodies = new THREE.InstancedMesh(bodyGeo, shirtMat, fans.length), heads = new THREE.InstancedMesh(headGeo, skinMat, fans.length);
@@ -383,47 +481,49 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
     bay.rotation.x = -Math.PI / 2; bay.position.set(0, 0.02, pitDir * 2); bay.receiveShadow = true;
     const outline = new THREE.Mesh(new THREE.PlaneGeometry(7, 3.2), new THREE.MeshStandardMaterial({ color: team.color, transparent: true, opacity: 0.55 }));
     outline.rotation.x = -Math.PI / 2; outline.position.y = 0.03;
-    const back = new THREE.Mesh(new THREE.BoxGeometry(15, 6, 0.4), new THREE.MeshStandardMaterial({ color: team.livery[0], roughness: 0.5 }));
-    back.position.set(0, 3, pitDir * 14);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(15, 8, 0.4), new THREE.MeshStandardMaterial({ color: team.livery[0], roughness: 0.5 }));
+    back.position.set(0, 2, pitDir * 14);
     const roof = new THREE.Mesh(new THREE.BoxGeometry(16, 0.5, 8), garageMat); roof.position.set(0, 6.2, pitDir * 10);
-    const walls = [-1, 1].map(sx => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6, 8), garageMat); m.position.set(sx * 7.8, 3, pitDir * 10); return m; });
+    const walls = [-1, 1].map(sx => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 8, 8), garageMat); m.position.set(sx * 7.8, 2, pitDir * 10); return m; });
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.4), new THREE.MeshStandardMaterial({ map: textTexture(team.name.toUpperCase(), '#111827', '#ffffff') }));
     sign.position.set(0, 5.4, pitDir * 5.9); sign.rotation.y = pitDir > 0 ? Math.PI : 0;
     g.add(bay, outline, back, roof, ...walls, sign);
     g.traverse(o => { o.castShadow = o.receiveShadow = true; });
-    g.position.set(box.x, 0, box.z); g.rotation.y = -box.heading;
+    g.position.set(box.x, relief.trackY(boxAt(k)), box.z); g.rotation.y = -box.heading;
     world.add(g);
   });
 
   // real buildings, kept clear of the grandstands and pit garages
   const laneSpots = [];
   for (let r = PIT.a; r <= PIT.d; r += 20) { const p = pointAt(t, r), off = pitDir * pit.centre(r); laneSpots.push({ x: p.x - Math.sin(p.heading) * off, z: p.z + Math.cos(p.heading) * off, r: 24 }); }
-  const keepClear = [...standSpots(t).map(s => ({ x: s.x, z: s.z, r: 55 })), ...laneSpots, ...TEAMS.map((_, k) => { const b = pitBox(t, k, pitDir); return { x: b.x, z: b.z, r: 30 }; })];
+  const keepClear = [...stands.map(s => ({ x: s.x, z: s.z, r: 55 })), ...laneSpots, ...TEAMS.map((_, k) => { const b = pitBox(t, k, pitDir); return { x: b.x, z: b.z, r: 30 }; })];
   const buildings = city.buildings.filter(b => {
     for (let k = 1; k < b.length; k += 2) if (keepClear.some(c => Math.hypot(b[k] - c.x, b[k + 1] - c.z) < c.r)) return false;
     return true;
   });
-  if (buildings.length) world.add(...buildCity(buildings, urban, rnd));
-  for (const [s0, s1] of city.tunnels) world.add(buildTunnel(t, s0, s1));
+  if (buildings.length) world.add(...buildCity(buildings, urban, rnd, relief.groundY));
+  for (const [s0, s1] of city.tunnels) world.add(buildTunnel(t, s0, s1, H));
   world.userData.buildings = buildings.length; world.userData.tunnels = city.tunnels.length;
-  // building footprints on a 40 m grid, so trees don't grow through them
-  const occupied = new Set<string>();
+  // building footprints on a 40 m grid (for the scattered trees) and an 8 m one (for the forests), so trees don't grow through them
+  const occupied = new Set<string>(), fine = new Set<string>();
   for (const b of buildings) {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let k = 1; k < b.length; k += 2) { x0 = Math.min(x0, b[k]); x1 = Math.max(x1, b[k]); z0 = Math.min(z0, b[k + 1]); z1 = Math.max(z1, b[k + 1]); }
     for (let gx = Math.floor((x0 - 5) / 40); gx <= Math.floor((x1 + 5) / 40); gx++)
       for (let gz = Math.floor((z0 - 5) / 40); gz <= Math.floor((z1 + 5) / 40); gz++) occupied.add(`${gx},${gz}`);
+    for (let gx = Math.floor((x0 - 4) / 8); gx <= Math.floor((x1 + 4) / 8); gx++)
+      for (let gz = Math.floor((z0 - 4) / 8); gz <= Math.floor((z1 + 4) / 8); gz++) fine.add(`${gx},${gz}`);
   }
   for (const c of keepClear) occupied.add(`${Math.floor(c.x / 40)},${Math.floor(c.z / 40)}`);
 
   // trees: trunks and layered crowns, scattered away from the circuit and the buildings
-  const trees: THREE.Matrix4[] = [];
+  const G0 = G.x0 + span * 0.075, G1 = G.z0 + span * 0.075, trees: THREE.Matrix4[] = [];
   for (let k = 0; trees.length < (urban ? 250 : 900) && k < 6000; k++) {
-    const x = cx + (rnd() - 0.5) * size * 0.85, z = cz + (rnd() - 0.5) * size * 0.85;
+    const x = G0 + rnd() * span * 0.85, z = G1 + rnd() * span * 0.85;
     if (occupied.has(`${Math.floor(x / 40)},${Math.floor(z / 40)}`)) continue;
-    if (Math.abs(project(t, x, z).lateral) < w + runoff + 14) continue;
+    if (Math.abs(project(t, x, z).lateral) < edge + 14) continue;
     const s = 0.7 + rnd() * 0.9;
-    trees.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)));
+    trees.push(new THREE.Matrix4().compose(new THREE.Vector3(x, relief.groundY(x, z) - 0.3, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6), new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)));
   }
   const trunkGeo = new THREE.CylinderGeometry(0.25, 0.4, 4, 6); trunkGeo.translate(0, 2, 0);
   const crownGeo = mergeGeometries([0, 1, 2].map(k => { const c = new THREE.ConeGeometry(4 - k * 0.9, 5, 8); c.translate(0, 5 + k * 2.6, 0); return c; }));
@@ -431,6 +531,12 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({ roughness: 0.95 }), trees.length);
   trees.forEach((m, k) => { trunks.setMatrixAt(k, m); crowns.setMatrixAt(k, m); crowns.setColorAt(k, new THREE.Color().setHSL(0.27 + rnd() * 0.06, 0.45, 0.2 + rnd() * 0.1)); });
   world.add(trunks, crowns);
+
+  // the real woods (Spa's Ardennes, Monza's park…), kept off the circuit, the pits, the stands and the buildings
+  const forest = buildForest(city.forests ?? [], relief, (x, z) => relief.margin(x, z) > -6 && !fine.has(`${Math.floor(x / 8)},${Math.floor(z / 8)}`)
+    && !stands.some(s => Math.hypot(x - s.x, z - s.z) < 50), rnd);
+  world.add(forest);
+  world.userData.trees = trees.length; world.userData.forest = forest.userData.count;
   return world;
 }
 
