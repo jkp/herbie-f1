@@ -86,4 +86,10 @@ describe('career', () => {
     expect(c.history).toEqual([{ season: 1, age: 17, team: 'Williams', position: 3, points: 15 * CALENDAR.length }]);
     expect(rookieOf(c).replaces).toBe('SAI');
   });
+
+  it('remembers what the driver looks like', () => {
+    const c = newCareer({ name: 'Herbie Rocket', number: 17, team: 'Williams', difficulty: 2, laps: 5, look: { skin: 3, hair: 2, hairColor: 1 } });
+    expect(c.look).toEqual({ skin: 3, hair: 2, hairColor: 1 });
+    expect(fresh().look).toEqual({ skin: 0, hair: 0, hairColor: 0 });
+  });
 });

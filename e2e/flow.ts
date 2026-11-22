@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 
 /** Home → track → team → driver, by click or by touch. */
-export async function pickRace(page: Page, o: { track: string; team: string; driver: string; difficulty?: string; laps?: number; tyre?: string }, touch = false) {
+export async function pickRace(page: Page, o: { track: string; team: string; driver: string; difficulty?: string; laps?: number; tyre?: string; time?: string; weather?: string }, touch = false) {
   const press = (name: string | RegExp) => {
     const b = page.getByRole('button', { name, exact: typeof name === 'string' });
     return touch ? b.tap() : b.click();
@@ -18,6 +18,8 @@ export async function pickRace(page: Page, o: { track: string; team: string; dri
   await press(o.difficulty ?? 'Pro');
   await press(`${o.laps ?? 3} laps`);
   if (o.tyre) await press(o.tyre);
+  if (o.time) await press(o.time);
+  if (o.weather) await press(o.weather);
   await press('Start race');
   await skipCutscene(page, touch);
 }

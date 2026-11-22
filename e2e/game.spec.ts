@@ -161,3 +161,11 @@ test('pinch and double-tap cannot zoom the page during a race', async ({ page })
   }));
   expect(Object.fromEntries(blocked)).toEqual({ gesturestart: true, gesturechange: true, dblclick: true, touchmove: true });
 });
+
+test('pick the time of day and the weather: a rainy night race under the floodlights', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Bahrain', team: 'Ferrari', driver: 'Charles Leclerc', laps: 3, time: 'Night', weather: 'Rain' });
+  const c = await page.evaluate(() => (window as any).__game.conditions());
+  expect(c).toMatchObject({ time: 'Night', weather: 'Rain', raining: true, floodlights: true });
+  expect(c.sun).toBeLessThan(0);
+});
