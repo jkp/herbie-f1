@@ -12,6 +12,8 @@ import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, r
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, makeCar, type City } from './scene';
+import { makeRelief, type Relief, type Terrain } from './relief';
+import { boxAt } from './race';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
@@ -49,9 +51,9 @@ Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, n
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
 /** Keep the shadow-casting area centred on what the camera is looking at. */
-function aimSun(x: number, z: number) {
-  sun.target.position.set(x, 0, z);
-  sun.position.set(x + SUN_DIR.x * 300, SUN_DIR.y * 300, z + SUN_DIR.z * 300);
+function aimSun(x: number, z: number, y = 0) {
+  sun.target.position.set(x, y, z);
+  sun.position.set(x + SUN_DIR.x * 300, y + SUN_DIR.y * 300, z + SUN_DIR.z * 300);
 }
 const camera = new THREE.PerspectiveCamera(65, 1, 0.05, 4000);
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
@@ -59,23 +61,25 @@ addEventListener('resize', resize); resize();
 
 let race!: Race;
 let carMeshes: THREE.Group[] = [];
-let def: TrackDef, track!: Track, world: THREE.Group | null = null;
+let def: TrackDef, track!: Track, world: THREE.Group | null = null, relief!: Relief; // flat until the circuit's terrain loads
 let driver = 'VER', difficulty = 3, laps = 15, startTyre = 1;
 
 function loadTrack(d: TrackDef) {
   if (def === d) return;
-  def = d; track = buildTrack(d);
+  def = d; track = buildTrack(d); relief = makeRelief(track);
   if (world) { scene.remove(world); world.traverse(o => (o as THREE.Mesh).geometry?.dispose()); }
   world = null;
   mapPath = makeMapPath(track);
-  // the real surroundings (buildings, tunnels) load per circuit; the scenery is built once they arrive
+  // the real surroundings (buildings, tunnels, forests) and landscape load per circuit; the scenery is built once they arrive
   const want = d;
-  CITY[`./buildings/${d.id}.json`]().then(m => {
+  Promise.all([CITY[`./buildings/${d.id}.json`](), TERRAIN[`./terrain/${d.id}.json`]()]).then(([c, ter]) => {
     if (def !== want) return;
-    world = buildWorld(track, m.default, d.urban); scene.add(world);
+    relief = makeRelief(track, ter.default);
+    world = buildWorld(track, c.default, d.urban, relief); scene.add(world);
   });
 }
 const CITY = import.meta.glob<{ default: City }>('./buildings/*.json');
+const TERRAIN = import.meta.glob<{ default: Terrain }>('./terrain/*.json');
 
 let screen: 'menu' | 'race' | 'results' = 'menu';
 let camMode = 0; // 0 chase, 1 cockpit, 2 TV
@@ -219,15 +223,15 @@ function showReview() {
 $('continue').onclick = () => (seasonOver(career!) ? showReview() : showHub());
 
 function playContract(t: Team, title: string, sub: string) {
-  const car = makeCar(t, career?.number ?? 1), box = pitBox(track, TEAMS.indexOf(t));
-  car.position.set(box.x, 0, box.z); scene.add(car);
+  const car = makeCar(t, career?.number ?? 1), box = pitBox(track, TEAMS.indexOf(t)), y = relief.trackY(boxAt(TEAMS.indexOf(t)));
+  car.position.set(box.x, y, box.z); scene.add(car);
   playCut({
     length: 6,
     update(time) {
       car.rotation.y = time * 0.6;
       const a = -box.heading + 0.8;
-      camera.position.set(box.x + Math.cos(a) * 8, 2.2, box.z + Math.sin(a) * 8);
-      camera.lookAt(box.x, 0.6, box.z);
+      camera.position.set(box.x + Math.cos(a) * 8, y + 2.2, box.z + Math.sin(a) * 8);
+      camera.lookAt(box.x, y + 0.6, box.z);
     },
     end() { scene.remove(car); showHub(); },
   }, title, sub);
@@ -471,8 +475,9 @@ function playIntro() {
       const k = Math.min(1, t / 4.5), e = k * k * (3 - 2 * k);
       const p = pointAt(track, 25 + (back.i === front.i ? 0 : (-30 - grid.length * 8 - 25) * e));
       const off = 14 - 8 * e;
-      camera.position.set(p.x - Math.sin(p.heading) * off, 4 + 3 * (1 - e), p.z + Math.cos(p.heading) * off);
-      camera.lookAt(me.x * e + p.x * (1 - e), 0.5, me.z * e + p.z * (1 - e));
+      const y = relief.groundY(p.x - Math.sin(p.heading) * off, p.z + Math.cos(p.heading) * off);
+      camera.position.set(p.x - Math.sin(p.heading) * off, y + 4 + 3 * (1 - e), p.z + Math.cos(p.heading) * off);
+      camera.lookAt(me.x * e + p.x * (1 - e), me.y + 0.5, me.z * e + p.z * (1 - e));
     },
     end() { camPos.set(0, 0, 0); },
   }, def.gp, introSub || `${def.name} · ${race.laps} laps`);
@@ -492,7 +497,8 @@ function playPodium() {
     podium.add(m.root); return m;
   }) : [];
   // out beyond the garages, facing the track
-  podium.position.set(box.x - Math.sin(box.heading) * side * 40, 0, box.z + Math.cos(box.heading) * side * 40);
+  const px = box.x - Math.sin(box.heading) * side * 40, pz = box.z + Math.cos(box.heading) * side * 40;
+  podium.position.set(px, relief.groundY(px, pz), pz);
   podium.rotation.y = -box.heading + side * Math.PI / 2;
   scene.add(podium);
   const confetti = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.15, 0.25), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), mine >= 0 ? 400 : 0);
@@ -504,8 +510,8 @@ function playPodium() {
     length: 7,
     update(t) {
       const a = podium.rotation.y + Math.sin(t * 0.3) * 0.45;
-      camera.position.set(podium.position.x + Math.cos(-a) * 7.5, 2.1, podium.position.z + Math.sin(-a) * 7.5);
-      camera.lookAt(podium.position.x, 1.5, podium.position.z);
+      camera.position.set(podium.position.x + Math.cos(-a) * 7.5, podium.position.y + 2.1, podium.position.z + Math.sin(-a) * 7.5);
+      camera.lookAt(podium.position.x, podium.position.y + 1.5, podium.position.z);
       for (const b of bits) {
         const y = ((b.y - t * b.s) % 10 + 10) % 10;
         q.setFromEuler(new THREE.Euler(t * 3 * b.s, b.k, t * 2));
@@ -566,7 +572,7 @@ function startPitScene() {
       // in down the pit lane and onto the marks; you drive it out yourself once the light goes green
       const along = t < T.arrive ? -22 * (1 - ease(clamp01(t / T.arrive))) : 0;
       const lift = t > T.jackUp && t < T.jackDown ? 0.09 * clamp01((t - T.jackUp) / 0.12) : 0;
-      mesh.position.copy(box).addScaledVector(fwd, along); mesh.position.y = lift;
+      mesh.position.copy(box).addScaledVector(fwd, along); mesh.position.y = box.y + lift;
       for (const pr of tyreProps) {
         const swapping = t > T.wheelsOff && t < T.wheelsOn;
         pr.wheel.visible = !swapping;
@@ -582,11 +588,11 @@ function startPitScene() {
       if (t >= T.go) $('cut-sub').textContent = `Stationary ${p.stopTime.toFixed(1)}s · ${COMPOUNDS[p.nextCompound].name.toLowerCase()}s on`;
       // low camera off the front corner, crew side
       const cam = new THREE.Vector3(4.6, 1.2, 4.2 - t * 0.15).applyAxisAngle(new THREE.Vector3(0, 1, 0), -heading).add(box);
-      camera.position.copy(cam); camera.lookAt(mesh.position.x, 0.5, mesh.position.z);
+      camera.position.copy(cam); camera.lookAt(mesh.position.x, box.y + 0.5, mesh.position.z);
     },
     end() {
       scene.remove(crewRoot);
-      mesh.position.y = 0;
+      mesh.position.y = box.y;
       for (const pr of tyreProps) pr.wheel.visible = true;
       while (race.player.pitTimer > 0) stepRace(race, STEP, { throttle: 0, brake: 0, steer: 0 });
       flash('GO GO GO');
@@ -607,8 +613,8 @@ function startSimplePitScene() {
       for (const w of wheels) w.position.z = Math.sign(w.parent!.position.z) * k * 0.7;
       if (t > off) $('cut-sub').textContent = `Fresh tyres · stationary ${p.stopTime.toFixed(1)}s`;
       const a = mesh.rotation.y + 2.2 + t * 0.25;
-      camera.position.set(mesh.position.x + Math.cos(a) * 7, 2.4, mesh.position.z + Math.sin(a) * 7);
-      camera.lookAt(mesh.position.x, 0.6, mesh.position.z);
+      camera.position.set(mesh.position.x + Math.cos(a) * 7, mesh.position.y + 2.4, mesh.position.z + Math.sin(a) * 7);
+      camera.lookAt(mesh.position.x, mesh.position.y + 0.6, mesh.position.z);
     },
     end() {
       for (const w of wheels) w.position.z = 0;
@@ -718,14 +724,16 @@ function frame(now: number) {
 
   race.racers.forEach((r, k) => {
     const m = carMeshes[k], { car } = r;
-    m.position.set(car.x, 0, car.z); m.rotation.y = -car.heading;
+    // on the road's real height, nose up the slope (the car's nose is +x, so pitch is about z)
+    const along = Math.cos(car.heading - pointAt(track, r.s).heading);
+    m.position.set(car.x, relief.trackY(r.s), car.z); m.rotation.set(0, -car.heading, Math.atan(relief.slope(r.s)) * along);
     for (const w of m.userData.wheels as THREE.Mesh[]) w.rotation.z -= car.speed * dt / 0.36;
     for (const f of m.userData.front as THREE.Group[]) f.rotation.y = -car.steer * maxSteerAngle(car.speed) * 2;
     (m.userData.stripe as THREE.MeshStandardMaterial).color.setHex(COMPOUNDS[r.compound].color);
   });
   updateDriver(dt);
 
-  const c = race.player.car, fx = Math.cos(c.heading), fz = Math.sin(c.heading);
+  const c = race.player.car, fx = Math.cos(c.heading), fz = Math.sin(c.heading), cy = relief.trackY(race.player.s);
   if (race.player.pitTimer > 0 && !cut && screen === 'race') startPitScene();
   if (cut) {
     cut.t += dt;
@@ -733,26 +741,29 @@ function frame(now: number) {
     if (cut.t >= cut.length) endCut();
   } else if (camMode === 1) {
     // driver's eyes: just in front of the head bone, looking down the road over the wheel
-    const eye = driverRig ? driverRig.person.bone('Head').getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(c.x, 1.0, c.z);
+    const eye = driverRig ? driverRig.person.bone('Head').getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(c.x, cy + 1.0, c.z);
     camera.position.set(eye.x + fx * 0.12, eye.y + 0.07, eye.z + fz * 0.12);
-    camera.lookAt(c.x + fx * 30, 0.5, c.z + fz * 30);
+    camera.lookAt(c.x + fx * 30, relief.trackY(race.player.s + 30) + 0.5, c.z + fz * 30);
   } else if (camMode === 2) {
     // TV camera: fixed trackside point ahead of the car, hops forward as it passes
     const tv = pointAt(track, Math.ceil(race.player.s / 250) * 250);
-    camera.position.set(tv.x - Math.sin(tv.heading) * 30, 9, tv.z + Math.cos(tv.heading) * 30);
-    camera.lookAt(c.x, 0.5, c.z);
+    const tx = tv.x - Math.sin(tv.heading) * 30, tz = tv.z + Math.cos(tv.heading) * 30;
+    camera.position.set(tx, Math.max(relief.groundY(tx, tz), relief.trackY(Math.ceil(race.player.s / 250) * 250)) + 9, tz);
+    camera.lookAt(c.x, cy + 0.5, c.z);
   } else {
     // fixed distance behind; only the camera's direction lags, so it swings out a little in corners
     if (!camPos.lengthSq()) camYaw = c.heading;
     camYaw += wrapAngle(c.heading - camYaw) * (1 - Math.exp(-dt * 6));
-    camPos.set(c.x - Math.cos(camYaw) * 7.5, 2.6, c.z - Math.sin(camYaw) * 7.5);
-    camLook.set(c.x + fx * 6, 1, c.z + fz * 6);
+    // height follows the road: never below the car, nor the ground behind it on a descent
+    const bx = c.x - Math.cos(camYaw) * 7.5, bz = c.z - Math.sin(camYaw) * 7.5;
+    camPos.set(bx, Math.max(cy, relief.groundY(bx, bz), relief.trackY(race.player.s - 7.5)) + 2.6, bz);
+    camLook.set(c.x + fx * 6, relief.trackY(race.player.s + 6) + 1, c.z + fz * 6);
     camera.position.copy(camPos); camera.lookAt(camLook);
   }
   // a wider view as speed builds sells the speed
   const fov = (camMode === 1 ? 72 : 62) + Math.min(14, Math.abs(c.speed) * 0.15);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
-  aimSun(c.x, c.z);
+  aimSun(c.x, c.z, cy);
 
   updateHud(dt);
   audio.update(gearFor(c.speed).rpm, ctl.throttle);
@@ -764,4 +775,4 @@ showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, forest: world?.userData.forest ?? 0, trees: world?.userData.trees ?? 0, carY: race ? carMeshes[race.racers.indexOf(race.player)]?.position.y ?? 0 : 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
