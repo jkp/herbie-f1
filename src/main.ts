@@ -20,7 +20,8 @@ import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
 import { buildWorld, buildFloodlights, makeCar, makeRain, loadCarModel, carModelLoaded, type City } from './scene';
 import { makeRelief, type Relief, type Terrain } from './relief';
-import { boxAt } from './race';
+import { boxAt, type Racer } from './race';
+import { makeReplay, type Frame } from './replay';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
@@ -193,6 +194,8 @@ function newRace() {
     scene.add(m); return m;
   });
   seatDriver();
+  replay = makeReplay(race.racers.length + 1); // + the safety car
+  incident = newIncidents(); debris.clear();
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
   camPos.set(0, 0, 0);
 }
@@ -452,13 +455,13 @@ function resetPlayer() {
   if (race.player.pitTimer > 0) return;
   place(race.player.s, 0);
 }
-/** Put the player at `s` metres round the lap, `lat` right of the centreline, stopped. */
-function place(s: number, lat: number) {
-  const r = race.player, p = pointAt(track, s);
+/** Put a racer (the player unless said) at `s` metres round the lap, `lat` right of the centreline, stopped. */
+function place(s: number, lat: number, r: Racer = race.player) {
+  const p = pointAt(track, s);
   let ds = p.i === r.i ? 0 : track.cum[p.i] - track.cum[r.i];
   if (ds > track.length / 2) ds -= track.length; if (ds < -track.length / 2) ds += track.length;
   r.total += ds; r.s = track.cum[p.i]; r.i = p.i;
-  Object.assign(r.car, { x: p.x - Math.sin(p.heading) * lat, z: p.z + Math.cos(p.heading) * lat, heading: p.heading, speed: 0, steer: 0 });
+  Object.assign(r.car, { x: p.x - Math.sin(p.heading) * lat, z: p.z + Math.cos(p.heading) * lat, heading: p.heading, speed: 0, steer: 0, spin: 0 });
   r.lateral = lat; r.inPitLane = false;
 }
 
@@ -551,9 +554,13 @@ function updateHud(dt: number) {
   if (picking) [...$('tyrebtns').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === p.nextCompound)));
   $('box').classList.toggle('on', p.boxRequested);
   touchLayer.querySelector('[data-act=box]')!.classList.toggle('on', p.boxRequested);
+  // flags: the safety car, or a yellow for a car spinning (or a wreck sliding) in the next 500 m
+  const L = track.length, yellow = race.racers.some(r => r !== p && (r.car.spin !== 0 || r.out && r.car.speed > 0) && ((r.s - p.s) % L + L) % L < 500);
+  const flagText = race.safety ? 'SAFETY CAR' : yellow ? 'YELLOW FLAG' : '';
+  $('flag').textContent = flagText; $('flag').classList.toggle('hidden', !flagText);
   const leader = order[0];
   $('rows').innerHTML = order.map((r, k) => {
-    const gap = k === 0 ? 'Leader' : r.finished && leader.finished ? `+${(r.finishTime - leader.finishTime).toFixed(1)}s`
+    const gap = r.out ? 'OUT' : k === 0 ? 'Leader' : r.finished && leader.finished ? `+${(r.finishTime - leader.finishTime).toFixed(1)}s`
       : `+${((leader.total - r.total) / Math.max(30, Math.abs(r.car.speed))).toFixed(1)}s`;
     return `<div class="row${r.isPlayer ? ' me' : ''}"><b>${k + 1}</b><span class="stripe" style="background:#${r.color.toString(16).padStart(6, '0')}"></span><span>${r.code}</span><span class="gap">${gap}</span></div>`;
   }).join('');
@@ -579,13 +586,13 @@ function updateHud(dt: number) {
 
 function showResults() {
   const order = standings(race), pos = order.indexOf(race.player) + 1, winner = order[0];
-  $('verdict').textContent = pos === 1 ? `You won the ${def.gp}!` : `You finished P${pos}`;
+  $('verdict').textContent = race.player.out ? `You crashed out of the ${def.gp}` : pos === 1 ? `You won the ${def.gp}!` : `You finished P${pos}`;
   const inCareer = mode === 'career' && !!career;
   if (inCareer) { recordRace(career!, order.map(r => r.code)); saveCareer(); }
   $('again').classList.toggle('hidden', inCareer); $('home-btn').classList.toggle('hidden', inCareer);
   $('continue').classList.toggle('hidden', !inCareer);
   $('resrows').innerHTML = order.map((r, k) => `<tr class="${r.isPlayer ? 'me' : ''}"><td>${k + 1}</td><td>${esc(r.name)}</td><td class="team">${esc(r.team.name)}</td><td>${
-    r === winner ? fmt(r.finishTime) : r.finished ? `+${(r.finishTime - winner.finishTime).toFixed(3)}s` : `${r.completed}/${race.laps} laps`
+    r.out ? 'DNF' : r === winner ? fmt(r.finishTime) : r.finished ? `+${(r.finishTime - winner.finishTime).toFixed(3)}s` : `${r.completed}/${race.laps} laps`
   }</td><td>Best ${fmt(r.bestLap)}</td></tr>`).join('');
   $('results').classList.remove('hidden');
 }
@@ -884,9 +891,10 @@ const spray = (() => {
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
   return {
     update(dt: number, raining: boolean) {
-      if (raining) for (const r of race.racers) {
-        const c = r.car, sp = Math.abs(c.speed);
-        if (sp < 12 || r.pitTimer > 0) continue;
+      for (const r of race.racers) {
+        // spray in the wet; tyre smoke from a car spinning, whatever the weather
+        const c = r.car, sp = Math.abs(c.speed), smoke = c.spin !== 0;
+        if (!raining && !smoke || sp < (smoke ? 3 : 12) || r.pitTimer > 0) continue;
         const fx = Math.cos(c.heading), fz = Math.sin(c.heading);
         for (let k = 0; k < Math.min(3, sp / 20); k++) {
           const p = P[next]; next = (next + 1) % N;
@@ -909,6 +917,139 @@ const spray = (() => {
   };
 })();
 
+// --- the safety car: a silver GT with a light bar ---
+const safetyCar = (() => {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshPhysicalMaterial({ color: 0xc4c8cc, metalness: 0.8, roughness: 0.3, clearcoat: 1 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x0d1014, roughness: 0.1, metalness: 0.6 });
+  const lamp = new THREE.MeshStandardMaterial({ color: 0x331a00, emissive: 0xff9900, emissiveIntensity: 0 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.62, 1.95), paint); body.position.y = 0.62;
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(2, 0.48, 1.6), glass); cabin.position.set(-0.5, 1.15, 0);
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 1.3), lamp); bar.position.set(-0.5, 1.44, 0);
+  g.add(body, cabin, bar);
+  const tyre = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 });
+  for (const [x, z] of [[1.45, 0.88], [1.45, -0.88], [-1.45, 0.88], [-1.45, -0.88]]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.26, 16), tyre); w.rotation.x = Math.PI / 2; w.position.set(x, 0.34, z); g.add(w);
+  }
+  g.traverse(o => { o.castShadow = true; });
+  g.visible = false; g.userData.lamp = lamp; scene.add(g);
+  return g;
+})();
+function showSafetyCar(f: Frame | null, now: number) {
+  safetyCar.visible = !!f?.on;
+  if (!f?.on) return;
+  safetyCar.position.set(f.x, relief.trackY(f.s), f.z); safetyCar.rotation.set(0, -f.heading, 0);
+  (safetyCar.userData.lamp as THREE.MeshStandardMaterial).emissiveIntensity = Math.floor(now / 300) % 2 ? 6 : 0.5;
+}
+const safetyFrame = (): Frame => {
+  const sc = race.safety;
+  if (!sc) return { x: 0, z: 0, heading: 0, steer: 0, s: 0, on: false };
+  const p = pointAt(track, sc.s);
+  return { x: p.x, z: p.z, heading: p.heading, steer: 0, s: sc.s, on: true };
+};
+
+// --- debris: bits of carbon and bodywork thrown off in a hit, left lying on the track ---
+const debris = (() => {
+  const N = 160, mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.34, 0.035, 0.18), new THREE.MeshStandardMaterial({ roughness: 0.5 }), N);
+  mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = true; scene.add(mesh);
+  const P = Array.from({ length: N }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, a: 0, ground: 0 }));
+  let next = 0, used = 0;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+  return {
+    get count() { return used; },
+    burst(r: Racer) {
+      const c = r.car, ground = relief.trackY(r.s), fx = Math.cos(c.heading), fz = Math.sin(c.heading);
+      for (let k = 0; k < 12; k++) {
+        const p = P[next];
+        Object.assign(p, { x: c.x + fx * 2, y: ground + 0.4, z: c.z + fz * 2, vx: fx * c.speed * 0.4 + (Math.random() - 0.5) * 8, vy: 2 + Math.random() * 5,
+          vz: fz * c.speed * 0.4 + (Math.random() - 0.5) * 8, spin: 6 + Math.random() * 10, a: Math.random() * 6, ground });
+        mesh.setColorAt(next, col.setHex(k % 3 ? 0x1c1d21 : r.color));
+        next = (next + 1) % N; used = Math.min(N, used + 1);
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    },
+    update(dt: number) {
+      for (let k = 0; k < used; k++) {
+        const p = P[k];
+        if (p.y > p.ground + 0.02 || p.vy > 0) { p.vy -= 9.8 * dt; p.a += p.spin * dt; } else { p.vy = 0; p.y = p.ground + 0.02; p.vx *= 0.85; p.vz *= 0.85; }
+        p.x += p.vx * dt; p.y = Math.max(p.ground + 0.02, p.y + p.vy * dt); p.z += p.vz * dt;
+        mesh.setMatrixAt(k, m.compose(v.set(p.x, p.y, p.z), q.setFromEuler(e.set(p.a, p.a * 0.7, 0)), one));
+      }
+      mesh.count = used; mesh.instanceMatrix.needsUpdate = true;
+    },
+    clear() { used = 0; mesh.count = 0; },
+  };
+})();
+
+// --- TV replays: the last seconds of every car, shown from trackside cameras, in slow motion for the big moments ---
+let replay = makeReplay(1), replaying = false;
+/** A trackside TV camera ahead of the action, looking at it; zoomed in to keep the car a good size in the shot. */
+function tvShot(s: number, x: number, y: number, z: number, spacing = 250, zoom = false) {
+  const post = Math.ceil(s / spacing) * spacing, tv = pointAt(track, post);
+  const tx = tv.x - Math.sin(tv.heading) * 30, tz = tv.z + Math.cos(tv.heading) * 30;
+  camera.position.set(tx, Math.max(relief.groundY(tx, tz), relief.trackY(post)) + 9, tz);
+  camera.lookAt(x, y + 0.5, z);
+  if (zoom) { camera.fov = Math.max(8, Math.min(55, 2 * Math.atan(7 / camera.position.distanceTo(v3.set(x, y, z))) * 180 / Math.PI)); camera.updateProjectionMatrix(); }
+}
+const v3 = new THREE.Vector3();
+/** Play back race time `from`..`to` following racer `focus`, at `rate(time)` × real speed, then `then`. Holds the race meanwhile. */
+function playReplay(from: number, to: number, focus: Racer, sub: string, rate: (time: number) => number, then: () => void) {
+  from = Math.max(from, replay.from); to = Math.min(to, replay.to);
+  const k = race.racers.indexOf(focus);
+  let clock = from, last = 0;
+  replaying = true;
+  playCut({
+    length: 600, pause: true,
+    update(t) {
+      clock += (t - last) * rate(clock); last = t;
+      if (clock >= to && cut) cut.length = 0;
+      race.racers.forEach((_, i) => {
+        const f = replay.sample(clock, i), m = carMeshes[i];
+        m.position.set(f.x, relief.trackY(f.s), f.z); m.rotation.set(0, -f.heading, 0);
+      });
+      showSafetyCar(replay.sample(clock, race.racers.length), performance.now());
+      const f = replay.sample(clock, k);
+      tvShot(f.s, f.x, relief.trackY(f.s), f.z, 160, true);
+    },
+    end() { replaying = false; then(); },
+  }, 'REPLAY', sub);
+}
+const newIncidents = () => ({ spinAt: -1, outAt: new Map<Racer, number>(), safetyFor: null as Racer | null, safetyAt: 0, hadSafety: false, damage: new Map<Racer, number>() });
+let incident = newIncidents();
+/** Spot the moments worth a flash or a replay: your spins and crashes, damage, a crash that brings out the safety car. */
+function watchIncidents() {
+  const p = race.player, I = incident;
+  for (const r of race.racers) {
+    if (r.damage > (I.damage.get(r) ?? 0) + 0.05) { debris.burst(r); if (r.isPlayer && !r.out) flash('FRONT WING DAMAGE'); }
+    I.damage.set(r, r.damage);
+    if (r.out && !I.outAt.has(r)) {
+      I.outAt.set(r, race.time);
+      if (r.isPlayer) flash('CRASHED OUT');
+      else if (race.safety && !I.safetyFor) { I.safetyFor = r; I.safetyAt = race.time; }
+    }
+  }
+  if (race.safety && !I.hadSafety) flash('SAFETY CAR');
+  if (!race.safety && I.hadSafety && race.phase === 'racing') flash('GREEN FLAG');
+  I.hadSafety = !!race.safety;
+  if (p.out || screen !== 'race') return;
+  if (p.car.spin && I.spinAt < 0) { I.spinAt = race.time; flash('SPIN!'); }
+  if (I.spinAt >= 0 && !p.car.spin) {
+    const from = I.spinAt - 3; I.spinAt = -1;
+    return playReplay(from, race.time, p, 'Spin!', () => 0.5, () => {});
+  }
+  const sc = I.safetyFor;
+  if (sc && race.time - I.safetyAt > 2.5) {
+    I.safetyFor = null;
+    playReplay(I.outAt.get(sc)! - 3, race.time, sc, `${sc.name} crashes out · safety car`, () => 0.5, () => {});
+  }
+}
+$('watch').onclick = () => {
+  const p = race.player, out = incident.outAt.get(p);
+  const end = out ?? (p.finished ? p.finishTime : race.time);
+  playReplay(end - (out ? 3 : 12), end + (out ? 6 : 2), p, out ? 'Crashed out' : 'The finish',
+    t => (!out && t > end - 2.5 ? 0.35 : out ? 0.5 : 1), () => {});
+};
+
 // --- loop ---
 let camYaw = 0, acc = 0, prev = performance.now(), menuSpin = 0;
 function frame(now: number) {
@@ -929,7 +1070,18 @@ function frame(now: number) {
   const ctl = screen === 'race' && !cut ? readControls() : { throttle: 0, brake: 0, steer: 0 };
   acc += dt;
   while (acc >= STEP) { if (!cut?.pause) stepRace(race, STEP, ctl); acc -= STEP; }
-  if (screen === 'race' && race.phase === 'finished' && !cut) { screen = 'results'; playPodium(); }
+  // the replay keeps everything from the start until just after you take the flag (or crash out)
+  const p = race.player, outAt = incident.outAt.get(p);
+  if (!cut?.pause && race.phase !== 'countdown' && (!p.finished || race.time < p.finishTime + 3))
+    replay.record(race.time, [...race.racers.map(r => ({ x: r.car.x, z: r.car.z, heading: r.car.heading, steer: r.car.steer, s: r.s, on: true })), safetyFrame()]);
+  if (!cut) watchIncidents();
+  if (screen === 'race' && race.phase === 'finished' && !cut) {
+    if (!p.out) { screen = 'results'; playPodium(); }
+    else if (outAt !== undefined && (p.car.speed === 0 || race.time - outAt > 4)) {
+      // crashed out: once the car's stopped, the crash again in slow motion, then the results
+      screen = 'results'; playReplay(outAt - 3, race.time, p, 'Crashed out', () => 0.5, showResults);
+    }
+  }
 
   race.racers.forEach((r, k) => {
     const m = carMeshes[k], { car } = r;
@@ -942,6 +1094,8 @@ function frame(now: number) {
     (m.userData.rainLight as THREE.MeshStandardMaterial).emissiveIntensity = rain.visible && Math.floor(now / 250) % 2 ? 4 : 0;
   });
   updateDriver(dt);
+  showSafetyCar(safetyFrame(), now);
+  debris.update(dt);
 
   const c = race.player.car, fx = Math.cos(c.heading), fz = Math.sin(c.heading), cy = relief.trackY(race.player.s);
   if (race.player.pitTimer > 0 && !cut && screen === 'race') startPitScene();
@@ -956,10 +1110,7 @@ function frame(now: number) {
     camera.lookAt(c.x + fx * 30, relief.trackY(race.player.s + 30) + 0.5, c.z + fz * 30);
   } else if (camMode === 2) {
     // TV camera: fixed trackside point ahead of the car, hops forward as it passes
-    const tv = pointAt(track, Math.ceil(race.player.s / 250) * 250);
-    const tx = tv.x - Math.sin(tv.heading) * 30, tz = tv.z + Math.cos(tv.heading) * 30;
-    camera.position.set(tx, Math.max(relief.groundY(tx, tz), relief.trackY(Math.ceil(race.player.s / 250) * 250)) + 9, tz);
-    camera.lookAt(c.x, cy + 0.5, c.z);
+    tvShot(race.player.s, c.x, cy, c.z);
   } else {
     // fixed distance behind; only the camera's direction lags, so it swings out a little in corners
     if (!camPos.lengthSq()) camYaw = c.heading;
@@ -972,7 +1123,7 @@ function frame(now: number) {
   }
   // a wider view as speed builds sells the speed
   const fov = (camMode === 1 ? 72 : 62) + Math.min(14, Math.abs(c.speed) * 0.15);
-  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
+  if (!replaying && Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
   aimSun(c.x, c.z, cy);
 
   updateHud(dt);
@@ -990,4 +1141,4 @@ requestAnimationFrame(frame);
 // e2e tests and console debugging
 Object.assign(window, { __game: { get race() { return race; }, touch, place,
   conditions: () => ({ time: TIMES[lit?.time ?? 0].name, weather: WEATHER[lit?.weather ?? 0].name, sun: TIMES[lit?.time ?? 0].sun, raining: rain.visible, floodlights: !!world?.getObjectByName('floodlights')?.visible }),
-  stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, forest: world?.userData.forest ?? 0, trees: world?.userData.trees ?? 0, carY: race ? carMeshes[race.racers.indexOf(race.player)]?.position.y ?? 0 : 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people, carModel: carModelLoaded(), blenderCars: carMeshes.filter(m => m.userData.blender).length }), three: { renderer, scene, sky } } });
+  stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, forest: world?.userData.forest ?? 0, trees: world?.userData.trees ?? 0, carY: race ? carMeshes[race.racers.indexOf(race.player)]?.position.y ?? 0 : 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people, carModel: carModelLoaded(), blenderCars: carMeshes.filter(m => m.userData.blender).length, safetyCar: safetyCar.visible, debris: debris.count }), three: { renderer, scene, sky } } });
