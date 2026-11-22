@@ -257,13 +257,13 @@ describe('race', () => {
 
   it('where another part of the lap runs close by, the barrier is between them, not over the other road', () => {
     const mon = buildTrack(CIRCUITS.find(c => c.id === 'monaco')!), edge = mon.width / 2 + mon.runoff;
-    const i = mon.room[1].findIndex(r => r < edge - 1);
+    const i = mon.room[0].findIndex(r => r < edge - 1);
     expect(i).toBeGreaterThanOrEqual(0);
     const race = createRace(mon, { laps: 3, countdown: 0, player: 'VER', size: 1 }), p = race.player;
     const pt = pointAt(mon, mon.cum[i]);
-    Object.assign(p.car, { x: pt.x - Math.sin(pt.heading) * edge, z: pt.z + Math.cos(pt.heading) * edge, heading: pt.heading });
+    Object.assign(p.car, { x: pt.x + Math.sin(pt.heading) * edge, z: pt.z - Math.cos(pt.heading) * edge, heading: pt.heading }); // left
     p.i = i; p.s = mon.cum[i];
     stepRace(race, 1 / 120, idle);
-    expect(p.lateral).toBeLessThanOrEqual(mon.room[1][p.i] + 0.05);
+    expect(p.lateral).toBeGreaterThanOrEqual(-mon.room[0][p.i] - 0.05);
   });
 });

@@ -44,3 +44,25 @@ test('race on an iPad with on-screen controls', async ({ page }) => {
   await page.locator('[data-act=cam]').tap();
   expect(errors).toEqual([]);
 });
+
+test('TILT steers by turning the iPad like a steering wheel', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Silverstone', team: 'Mercedes', driver: 'Lewis Hamilton' }, true);
+  // a reading of the iPad held upright, turned clockwise by `turn` degrees
+  const motion = (turn: number) => page.evaluate(turn => {
+    const f = turn * Math.PI / 180, a = (screen.orientation?.angle ?? 0) * Math.PI / 180, sx = -Math.sin(f) * 9.81, sy = Math.cos(f) * 9.81;
+    dispatchEvent(new DeviceMotionEvent('devicemotion', { accelerationIncludingGravity: { x: sx * Math.cos(a) + sy * Math.sin(a), y: -sx * Math.sin(a) + sy * Math.cos(a), z: 0 } }));
+  }, turn);
+  await page.locator('[data-act=tilt]').tap();
+  await expect(page.locator('[data-act=tilt]')).toHaveClass(/on/);
+  await motion(0); // how it's held when switched on is straight ahead
+  const gas = (await page.locator('[data-ctl=gas]').boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: gas.x + gas.width / 2, y: gas.y + gas.height / 2, id: 1 }] });
+  await page.waitForTimeout(1200);
+  for (let k = 0; k < 10; k++) { await motion(25); await page.waitForTimeout(50); }
+  expect(await page.evaluate(() => (window as any).__game.race.player.car.steer)).toBeGreaterThan(0.5);
+  for (let k = 0; k < 10; k++) { await motion(-25); await page.waitForTimeout(50); }
+  expect(await page.evaluate(() => (window as any).__game.race.player.car.steer)).toBeLessThan(-0.5);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+});
