@@ -88,7 +88,7 @@ describe('car physics', () => {
   });
 
   it('turning harder than the grass allows at speed reports a slide', () => {
-    const car = newCar(0, 0, 0); car.speed = 50;
+    const car = newCar(0, 0, 0); car.speed = 50; car.steer = 1; // wheel already at full lock
     expect(stepCar(car, { throttle: 1, brake: 0, steer: 1 }, 1 / 120, 'grass')).toBeGreaterThan(1.5);
     const calm = newCar(0, 0, 0); calm.speed = 50;
     expect(stepCar(calm, { throttle: 1, brake: 0, steer: 0 }, 1 / 120, 'track')).toBeLessThan(1);

@@ -2,7 +2,8 @@
 export type Surface = 'track' | 'grass';
 export interface Controls { throttle: number; brake: number; steer: number } // steer: -1 left .. +1 right
 // power: engine multiplier (1 = best car); grip: tyre condition multiplier (1 = fresh)
-export interface CarState { x: number; z: number; heading: number; speed: number; steer: number; power: number; grip: number }
+// spin: yaw rate (rad/s) while spun out, 0 when driving; slip: the direction it slides in meanwhile
+export interface CarState { x: number; z: number; heading: number; speed: number; steer: number; power: number; grip: number; spin: number; slip: number }
 
 const WHEELBASE = 3.6;
 const POWER = 940;        // W per kg: ~750 kW / 800 kg
@@ -10,7 +11,7 @@ const TRACTION = 12;      // m/s² launch limit
 const DRAG = 0.0012;      // per m of v²; gives ~330 km/h top speed
 const STEER_RATE = 5;     // steering travel per second
 
-export const newCar = (x: number, z: number, heading: number, power = 1): CarState => ({ x, z, heading, speed: 0, steer: 0, power, grip: 1 });
+export const newCar = (x: number, z: number, heading: number, power = 1): CarState => ({ x, z, heading, speed: 0, steer: 0, power, grip: 1, spin: 0, slip: heading });
 
 /** Max lateral acceleration (m/s²); downforce adds grip with v². */
 export const GRIP_BASE = 18, GRIP_AERO = 0.007;
@@ -19,7 +20,22 @@ export const brakeDecel = (v: number, s: Surface) => (20 + 0.004 * v * v) * (s =
 // Full lock is enough for Monaco's ~10 m hairpin at hairpin speed; at speed, grip is the limit anyway.
 export const maxSteerAngle = (v: number) => 0.55 / (1 + Math.abs(v) / 25);
 
+/** Spin out: the car rotates (`dir` +1 clockwise, -1 anticlockwise) while sliding on along its line. */
+export function startSpin(c: CarState, dir: number) {
+  if (c.spin) return;
+  c.spin = Math.sign(dir || 1) * (4 + Math.min(4, Math.abs(c.speed) / 15)); c.slip = c.heading; c.steer = 0;
+}
+
+/** Advance the car; returns how hard it was asked to turn against its grip (over 1 = sliding). */
 export function stepCar(c: CarState, ctl: Controls, dt: number, surface: Surface) {
+  if (c.spin) {
+    // spun: no control, the tyres scrub it to a stop as it turns
+    c.heading += c.spin * dt; c.spin *= Math.exp(-0.6 * dt);
+    c.speed = Math.max(0, Math.abs(c.speed) - (surface === 'grass' ? 7 : 11) * dt);
+    c.x += Math.cos(c.slip) * c.speed * dt; c.z += Math.sin(c.slip) * c.speed * dt;
+    if (c.speed === 0) c.spin = 0;
+    return 0;
+  }
   const target = Math.max(-1, Math.min(1, ctl.steer));
   c.steer += Math.max(-STEER_RATE * dt, Math.min(STEER_RATE * dt, target - c.steer));
 
@@ -45,6 +61,7 @@ export function stepCar(c: CarState, ctl: Controls, dt: number, surface: Surface
   c.heading += yaw * dt;
   c.x += Math.cos(c.heading) * c.speed * dt;
   c.z += Math.sin(c.heading) * c.speed * dt;
+  return Number.isFinite(cap) ? Math.abs(kin) / cap : 0;
 }
 
 const GEAR_TOP = [0, 22, 33, 43, 53, 63, 73, 83, 95]; // m/s at redline per gear
