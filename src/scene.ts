@@ -251,7 +251,7 @@ function buildPitLane(t: Track, pit: ReturnType<typeof pitLane>, barrierMat: THR
   const off = (k: number) => (i: number) => d * (pit.centre(rel(i)) + k);
   const span = (a: number, b: number) => [(i: number) => Math.min(off(a)(i), off(b)(i)), (i: number) => Math.max(off(a)(i), off(b)(i))] as const;
   const tex = textures();
-  g.add(strip(t, ...span(-4, 4), 0.015, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.9, color: 0xc9ccd1 }), inLane, undefined, 6));
+  g.add(strip(t, ...span(-4, 4), 0.015, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.9, color: 0xc9ccd1, name: 'asphalt' }), inLane, undefined, 6));
   const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
   for (const k of [-4, 4]) g.add(strip(t, ...span(k - 0.15, k + 0.15), 0.03, paint, i => inLane(i) && pit.centre(rel(i)) + k > w));
   // the speed-limit lines across the lane
@@ -308,7 +308,7 @@ export function buildWorld(t: Track, city: City = { buildings: [], tunnels: [] }
   const gravel = new THREE.MeshStandardMaterial({ map: tex.gravel, roughness: 1 });
   world.add(strip(t, -w - 2, -w - runoff * 0.75, 0.008, gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) > 0, undefined, 4));
   world.add(strip(t, w + 2, w + runoff * 0.75, 0.008, gravel, i => t.curvature[i] > 1 / 150 && turnSign(i) < 0, undefined, 4));
-  world.add(strip(t, -w, w, 0.02, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.85 }), undefined, undefined, 6));
+  world.add(strip(t, -w, w, 0.02, new THREE.MeshStandardMaterial({ map: tex.asphalt, roughness: 0.85, name: 'asphalt' }), undefined, undefined, 6));
   const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 });
   world.add(strip(t, -w + 0.3, -w + 0.55, 0.03, paint));
   world.add(strip(t, w - 0.55, w - 0.3, 0.03, paint));
@@ -570,4 +570,46 @@ export function makeCar(team: Team, number: number) {
     }
   car.userData.wheels = wheels; car.userData.front = front; car.userData.stripe = stripe;
   return car;
+}
+
+/** Floodlight towers along both sides of the lap for night races: a mast and a glowing bank of lamps angled at the track. */
+export function buildFloodlights(t: Track) {
+  const w = t.width / 2, spots: THREE.Matrix4[] = [];
+  for (let i = 0; i < t.n; i += 35) for (const s of [-1, 1]) {
+    if ((i / 35) % 2 && s > 0) continue; // staggered: every other tower on the right
+    const [x, z] = side(t, i, s * (w + t.runoff + 4)), h = headingAt(t, i);
+    spots.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -h + (s > 0 ? Math.PI : 0)), new THREE.Vector3(1, 1, 1)));
+  }
+  const mastGeo = new THREE.CylinderGeometry(0.25, 0.35, 22, 6); mastGeo.translate(0, 11, 0);
+  const headGeo = new THREE.BoxGeometry(4, 1.6, 0.5); headGeo.rotateX(-0.5); headGeo.translate(0, 22, 0.6);
+  const masts = new THREE.InstancedMesh(mastGeo, new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.6, metalness: 0.5 }), spots.length);
+  const heads = new THREE.InstancedMesh(headGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xf5f7ff, emissiveIntensity: 6 }), spots.length);
+  spots.forEach((m, k) => { masts.setMatrixAt(k, m); heads.setMatrixAt(k, m); });
+  const g = new THREE.Group(); g.add(masts, heads); g.name = 'floodlights';
+  return g;
+}
+
+/** Rain: streaks falling in a box that follows the camera, animated on the GPU. */
+export function makeRain(count = 6000, size = 60) {
+  const pos = new Float32Array(count * 6), end = new Float32Array(count * 2), rnd = mulberry32(5);
+  for (let k = 0; k < count; k++) {
+    const x = rnd() * size, y = rnd() * size, z = rnd() * size;
+    pos.set([x, y, z, x, y, z], k * 6); end[k * 2 + 1] = 1;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('end', new THREE.BufferAttribute(end, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uSize: { value: size } },
+    transparent: true, depthWrite: false,
+    vertexShader: `attribute float end; uniform float uTime, uSize; uniform vec3 uCam;
+      void main() {
+        vec3 p = position; p.y -= uTime * 22.0; p.x -= uTime * 2.0;
+        p = mod(p - uCam + uSize * 0.5, uSize) + uCam - uSize * 0.5;
+        p.y += end * 0.9; p.x += end * 0.08;
+        gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: 'void main() { gl_FragColor = vec4(0.75, 0.8, 0.88, 0.35); }',
+  });
+  const rain = new THREE.LineSegments(g, mat); rain.frustumCulled = false; rain.name = 'rain';
+  return rain;
 }

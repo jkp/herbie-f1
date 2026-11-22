@@ -10,7 +10,10 @@ export interface Career {
   points: Record<string, number>; // driver code → points this season
   finishes: number[];             // the player's finishing positions this season
   history: { season: number; age: number; team: string; position: number; points: number }[];
+  look: Look;
 }
+/** What the driver looks like: indexes into SKIN_TONES, HAIRSTYLES and HAIR_COLOURS (src/people.ts). */
+export interface Look { skin: number; hair: number; hairColor: number }
 
 export const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const ORDER = ['bahrain', 'barcelona', 'monaco', 'silverstone', 'redbullring', 'hungaroring', 'spa', 'zandvoort', 'monza', 'interlagos', 'yasmarina'];
@@ -32,8 +35,8 @@ export function numberProblem(n: number) {
   return owner ? `#${n} belongs to ${owner.name}.` : null;
 }
 
-export function newCareer(o: { name: string; number: number; team: string; difficulty: number; laps: number }): Career {
-  return { ...o, code: deriveCode(o.name), age: 17, season: 1, round: 0, points: {}, finishes: [], history: [] };
+export function newCareer(o: { name: string; number: number; team: string; difficulty: number; laps: number; look?: Look }): Career {
+  return { look: { skin: 0, hair: 0, hairColor: 0 }, ...o, code: deriveCode(o.name), age: 17, season: 1, round: 0, points: {}, finishes: [], history: [] };
 }
 
 /** The player takes their team's second seat. */

@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { TIMES, WEATHER } from './conditions';
 import { buildTrack, pointAt, wrapAngle, type Track, type TrackDef } from './track';
 import { CIRCUITS } from './circuits';
 import { TEAMS, type Team } from './grid';
@@ -11,13 +17,15 @@ import { reachWith } from './ik';
 import { CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
-import { buildWorld, makeCar, type City } from './scene';
+import { buildWorld, buildFloodlights, makeCar, makeRain, type City } from './scene';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
   size: params.has('size') ? Number(params.get('size')) : undefined,
   countdown: Number(params.get('countdown') ?? 4),
 };
+// effects: ambient occlusion and bloom on a computer; bloom only on tablets and phones (?quality=low|high overrides)
+const QUALITY = params.get('quality') ?? (matchMedia('(pointer: coarse)').matches ? 'low' : 'high');
 const STEP = 1 / 120;
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -34,15 +42,11 @@ scene.fog = new THREE.Fog(0xc4d6e6, 350, 2200);
 const SUN_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(50), THREE.MathUtils.degToRad(140));
 const sky = new Sky(); sky.scale.setScalar(10000);
 Object.assign(sky.material.uniforms, { turbidity: { value: 3 }, rayleigh: { value: 1.2 }, mieCoefficient: { value: 0.004 }, mieDirectionalG: { value: 0.8 } });
-sky.material.uniforms.sunPosition.value.copy(SUN_DIR);
 scene.add(sky);
-{
-  const pmrem = new THREE.PMREMGenerator(renderer), env = new THREE.Scene(), envSky = new Sky();
-  envSky.scale.setScalar(1000); envSky.material.uniforms.sunPosition.value.copy(SUN_DIR); env.add(envSky);
-  scene.environment = pmrem.fromScene(env).texture;
-  scene.environmentIntensity = 0.2; // the raw sky is far brighter than the sun light it accompanies
-}
-scene.add(new THREE.HemisphereLight(0xdbeafe, 0x4b6b3a, 0.35));
+const pmrem = new THREE.PMREMGenerator(renderer), envScene = new THREE.Scene(), envSky = new Sky();
+envSky.scale.setScalar(1000); envScene.add(envSky);
+const hemi = new THREE.HemisphereLight(0xdbeafe, 0x4b6b3a, 0.35);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 600 });
@@ -54,7 +58,76 @@ function aimSun(x: number, z: number) {
   sun.position.set(x + SUN_DIR.x * 300, SUN_DIR.y * 300, z + SUN_DIR.z * 300);
 }
 const camera = new THREE.PerspectiveCamera(65, 1, 0.05, 4000);
-function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+// post-processing: soft contact shadows (ambient occlusion), glow on bright lights, then tone mapping
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+composer.addPass(new RenderPass(scene, camera));
+const ao = QUALITY === 'high' ? new GTAOPass(scene, camera, 1, 1) : null;
+if (ao) { ao.blendIntensity = 0.8; ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, scale: 1 }); composer.addPass(ao); }
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+function resize() {
+  renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(innerWidth, innerHeight);
+}
+
+// --- time of day and weather ---
+let timeOfDay = 1, weather = 0;
+const rain = makeRain(); rain.visible = false; scene.add(rain);
+let lit: { time: number; weather: number } | null = null;
+/** Sky, sun, ambient light, fog, floodlights, rain and wet tarmac for a time of day and weather. */
+function applyConditions(time: number, wx: number) {
+  const T = TIMES[time], W = WEATHER[wx], night = T.sun < 0, overcast = W.cloud;
+  // the sun (or at night, the floodlights' key light from high above)
+  SUN_DIR.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - (night ? 65 : Math.max(T.sun, 2))), THREE.MathUtils.degToRad(T.azimuth));
+  const sunCol = night ? 0xeef2ff : T.sun < 8 ? 0xff9a50 : T.sun < 25 ? 0xffe2b8 : 0xfff4e0;
+  sun.color.setHex(sunCol);
+  sun.intensity = (night ? 1.5 : T.sun < 8 ? 1.7 : 2.2) * (1 - overcast * 0.7);
+  sun.shadow.intensity = 1 - overcast * 0.75;
+  hemi.intensity = night ? 0.12 : 0.35 + overcast * 0.45;
+  hemi.color.setHex(night ? 0x2a3550 : overcast ? 0xb8c0c8 : T.sun < 8 ? 0xffc8a8 : 0xdbeafe);
+  // sky: the physical sky by day, a plain dark or grey dome otherwise
+  const u = sky.material.uniforms, eu = envSky.material.uniforms;
+  for (const x of [u, eu]) {
+    x.sunPosition.value.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - T.sun), THREE.MathUtils.degToRad(T.azimuth));
+    x.turbidity.value = T.sun < 8 ? 6 : 3 + overcast * 8; x.rayleigh.value = T.sun < 8 ? 2.5 : 1.2 - overcast * 0.8;
+    x.mieCoefficient.value = T.sun < 8 ? 0.01 : 0.004 + overcast * 0.01;
+  }
+  const plain = night || W.rain;
+  sky.visible = !plain;
+  const fogCol = night ? (W.rain ? 0x10141c : 0x070a12) : W.rain ? 0x8b939c : overcast ? 0xb9c1c9 : T.sun < 8 ? 0xe0a982 : T.sun < 25 ? 0xd2dbe4 : 0xc4d6e6;
+  scene.background = plain ? new THREE.Color(fogCol) : null;
+  const fog = scene.fog as THREE.Fog;
+  fog.color.setHex(fogCol); fog.near = W.rain ? 90 : night ? 250 : 350 - overcast * 100; fog.far = W.rain ? 1000 : night ? 1600 : 2200 - overcast * 500;
+  // reflections: from the sky by day; dim at night
+  envSky.visible = true;
+  envScene.background = plain ? new THREE.Color(night ? 0x0c1220 : 0x8b939c) : null;
+  envSky.visible = !plain;
+  scene.environment?.dispose(); scene.environment = pmrem.fromScene(envScene).texture;
+  scene.environmentIntensity = night ? 0.6 : plain ? 0.8 : 0.2 + overcast * 0.3;
+  renderer.toneMappingExposure = night ? 0.95 : W.rain ? 0.9 : overcast ? 0.85 : 0.75;
+  // glow on the floodlights; by day the whole bright sky would bloom into a milky veil
+  bloom.enabled = night; bloom.strength = 0.8; bloom.threshold = 1.2;
+  rain.visible = W.rain;
+  lit = { time, weather: wx };
+  dressWorld();
+}
+/** The parts of the conditions that live on the circuit: floodlights, and wet or dry tarmac. Re-run when a circuit's scenery loads. */
+function dressWorld() {
+  if (!world || !lit) return;
+  const night = TIMES[lit.time].sun < 0, wet = WEATHER[lit.weather].rain;
+  let flood = world.getObjectByName('floodlights');
+  if (night && !flood) { flood = buildFloodlights(track); world.add(flood); }
+  if (flood) flood.visible = night;
+  world.traverse(o => {
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+    if (m?.name !== 'asphalt') return;
+    m.userData.dry ??= { roughness: m.roughness, color: m.color.getHex() };
+    m.roughness = wet ? 0.12 : m.userData.dry.roughness;
+    m.color.setHex(wet ? 0x5a5d62 : m.userData.dry.color);
+  });
+}
+
 addEventListener('resize', resize); resize();
 
 let race!: Race;
@@ -72,7 +145,7 @@ function loadTrack(d: TrackDef) {
   const want = d;
   CITY[`./buildings/${d.id}.json`]().then(m => {
     if (def !== want) return;
-    world = buildWorld(track, m.default, d.urban); scene.add(world);
+    world = buildWorld(track, m.default, d.urban); scene.add(world); dressWorld();
   });
 }
 const CITY = import.meta.glob<{ default: City }>('./buildings/*.json');
@@ -83,8 +156,9 @@ function clearCars() { carMeshes.forEach(m => scene.remove(m)); carMeshes = []; 
 function newRace() {
   clearCars();
   race = career && mode === 'career'
-    ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career), tyre: startTyre })
-    : createRace(track, { ...OPTS, player: driver, difficulty, laps, tyre: startTyre });
+    ? createRace(track, { ...OPTS, player: career.code, difficulty: career.difficulty, laps: career.laps, rookie: rookieOf(career), tyre: startTyre, weather })
+    : createRace(track, { ...OPTS, player: driver, difficulty, laps, tyre: startTyre, weather });
+  applyConditions(timeOfDay, weather);
   carMeshes = race.racers.map(r => { const m = makeCar(r.team, r.number); scene.add(m); return m; });
   seatDriver();
   lastPos = race.racers.indexOf(race.player) + 1; // so the grid slot doesn't flash as a gain
@@ -141,6 +215,12 @@ function pills(el: string, items: string[], selected: number, pick: (i: number) 
 }
 const LAP_CHOICES = [3, 5, 10, 15, 20, 25, 30];
 const tyrePills = (el: string, rerender: () => void) => pills(el, COMPOUNDS.map(c => c.name), startTyre, i => { startTyre = i; }, rerender);
+/** Time of day and weather pills; the menu backdrop previews them. */
+function skyPills(timeEl: string, wxEl: string) {
+  const again = () => skyPills(timeEl, wxEl);
+  pills(timeEl, TIMES.map(t => t.name), timeOfDay, i => { timeOfDay = i; applyConditions(timeOfDay, weather); }, again);
+  pills(wxEl, WEATHER.map(w => w.name), weather, i => { weather = i; applyConditions(timeOfDay, weather); }, again);
+}
 function renderSettings() {
   pills('difflist', DIFFICULTIES.map(d => d.name), difficulty, i => { difficulty = i; });
   const help = DIFFICULTIES[difficulty].assist;
@@ -148,6 +228,7 @@ function renderSettings() {
     : help.brake ? 'Driving help: auto-braking for corners.' : 'No driving help.';
   pills('lapslist', LAP_CHOICES.map(n => `${n} laps`), LAP_CHOICES.indexOf(laps), i => { laps = LAP_CHOICES[i]; });
   tyrePills('tyrelist', renderSettings);
+  skyPills('timelist', 'weatherlist');
 }
 $('start-btn').onclick = startRace;
 $('race-btn').onclick = () => { mode = 'quick'; showMenu('tracks'); };
@@ -187,6 +268,7 @@ function showHub() {
     <small>${esc(c.team)} · Season ${c.season} · Age ${c.age}</small><small>Championship: P${pos} · ${c.points[c.code] ?? 0} pts</small>`;
   $('hub-next').innerHTML = `${outline(next)}<b>${esc(next.gp)}</b><small>Round ${c.round + 1} of ${CALENDAR.length} · ${esc(next.name)} · ${c.laps} laps</small>`;
   const hubTyres = () => tyrePills('hub-tyres', hubTyres); hubTyres();
+  skyPills('hub-time', 'hub-weather');
   $('standings').innerHTML = table.map((e, k) => `<tr class="${e.code === c.code ? 'me' : ''}"><td>${k + 1}</td><td>${e.code}</td><td>${esc(e.name)}</td><td class="team">${esc(e.team)}</td><td class="pts">${e.points}</td></tr>`).join('');
   showMenu('career-hub');
 }
@@ -706,7 +788,7 @@ function frame(now: number) {
     camera.lookAt(p.x, 0, p.z);
     aimSun(p.x, p.z);
     if (cut) { cut.t += dt; cut.update(cut.t); if (cut.t >= cut.length) endCut(); }
-    renderer.render(scene, camera);
+    composer.render(dt);
     requestAnimationFrame(frame);
     return;
   }
@@ -756,12 +838,16 @@ function frame(now: number) {
 
   updateHud(dt);
   audio.update(gearFor(c.speed).rpm, ctl.throttle);
-  renderer.render(scene, camera);
+  if (rain.visible) { const u = (rain.material as THREE.ShaderMaterial).uniforms; u.uTime.value = now / 1000; u.uCam.value.copy(camera.position); }
+  composer.render(dt);
   requestAnimationFrame(frame);
 }
 loadTrack(CIRCUITS[0]);
+applyConditions(timeOfDay, weather);
 showMenu('home');
 requestAnimationFrame(frame);
 
 // e2e tests and console debugging
-Object.assign(window, { __game: { get race() { return race; }, touch, place, stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+Object.assign(window, { __game: { get race() { return race; }, touch, place,
+  conditions: () => ({ time: TIMES[lit?.time ?? 0].name, weather: WEATHER[lit?.weather ?? 0].name, sun: TIMES[lit?.time ?? 0].sun, raining: rain.visible, floodlights: !!world?.getObjectByName('floodlights')?.visible }),
+  stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });

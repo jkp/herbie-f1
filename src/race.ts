@@ -2,6 +2,7 @@ import { newCar, stepCar, type CarState, type Controls } from './car';
 import { pointAt, project, wrapAngle, type Track } from './track';
 import { aiControls, assistControls, speedProfile } from './ai';
 import { DRIVERS, TEAMS, type Team } from './grid';
+import { WEATHER } from './conditions';
 
 export interface Racer {
   name: string; code: string; number: number; team: Team; color: number;
@@ -24,6 +25,7 @@ export interface Race {
   track: Track; profile: Float64Array; racers: Racer[]; player: Racer;
   laps: number; difficulty: number; time: number; pitSide: number; countdown: number; phase: 'countdown' | 'racing' | 'finished';
   runoff: number; pit: ReturnType<typeof pitLane>;
+  grip: number; // the track: 1 dry, lower in the wet
 }
 
 const CAR_RADIUS = 2.2;
@@ -95,7 +97,7 @@ export const DIFFICULTIES = [
 
 /** The 2022 grid, quickest first; the player takes `player`'s seat and keeps that car's grid slot. `size` trims the field. */
 export function createRace(track: Track, o: {
-  laps: number; countdown: number; player: string; size?: number; difficulty?: number; tyre?: number; // player's starting compound
+  laps: number; countdown: number; player: string; size?: number; difficulty?: number; tyre?: number; weather?: number; // player's starting compound; index into WEATHER
   rookie?: { name: string; code: string; number: number; replaces: string }; // career driver taking a seat
 }): Race {
   const difficulty = o.difficulty ?? 3, rk = o.rookie;
@@ -122,7 +124,7 @@ export function createRace(track: Track, o: {
   const side = pitSide(track);
   return {
     track, profile: speedProfile(track), racers, pitSide: side, pit: pitLane(track, side), player: racers.find(r => r.isPlayer)!,
-    laps: o.laps, difficulty, time: 0, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
+    laps: o.laps, difficulty, time: 0, grip: WEATHER[o.weather ?? 0].grip, countdown: o.countdown, phase: o.countdown > 0 ? 'countdown' : 'racing', runoff: track.runoff,
   };
 }
 
@@ -143,7 +145,7 @@ export function stepRace(race: Race, dt: number, player: Controls) {
     const help = DIFFICULTIES[race.difficulty].assist;
     const lapsOn = (r.total - r.tyreFrom) / track.length, life = tyreLife(r.compound, race.laps);
     r.punctured = lapsOn >= life * PUNCTURE_AT;
-    r.car.grip = tyreGrip(lapsOn, life, r.compound) * (r.isPlayer ? help.grip : 1);
+    r.car.grip = tyreGrip(lapsOn, life, r.compound) * race.grip * (r.isPlayer ? help.grip : 1);
     const autoPit = DIFFICULTIES[race.difficulty].pit === 'auto' && (r.inPitLane || r.boxRequested && pit.rel(r.s) > PIT.a - 300 && pit.rel(r.s) < PIT.c);
     const ctl = r.isPlayer && !r.finished && !autoPit ? assistControls(r, race, player, help) : aiControls(r, race);
     const onTarmac = Math.abs(r.lateral) <= edge + 1 || r.inPitLane || inPitMouth(race, r.s, r.lateral);
