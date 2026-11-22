@@ -135,3 +135,14 @@ test('Monaco is surrounded by real buildings and has its tunnel', async ({ page 
   await expect.poll(() => page.evaluate(() => (window as any).__game.stats().buildings), { timeout: 15_000 }).toBeGreaterThan(800);
   expect(await page.evaluate(() => (window as any).__game.stats().tunnels)).toBe(1);
 });
+
+test('pinch and double-tap cannot zoom the page during a race', async ({ page }) => {
+  await page.goto('/?countdown=0');
+  await pickRace(page, { track: 'Spa', team: 'Ferrari', driver: 'Charles Leclerc', difficulty: 'Pro', laps: 3 });
+  const blocked = await page.evaluate(() => ['gesturestart', 'gesturechange', 'dblclick', 'touchmove'].map(type => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    document.querySelector('canvas')!.dispatchEvent(e);
+    return [type, e.defaultPrevented];
+  }));
+  expect(Object.fromEntries(blocked)).toEqual({ gesturestart: true, gesturechange: true, dblclick: true, touchmove: true });
+});
