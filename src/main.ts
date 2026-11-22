@@ -17,7 +17,7 @@ import { reachWith } from './ik';
 import { type Look, CALENDAR, championship, newCareer, nextSeason, numberProblem, offers, recordRace, rookieOf, seasonOver, type Career } from './career';
 import { pitBox } from './race';
 import { gearFor, maxSteerAngle, type Controls } from './car';
-import { buildWorld, buildFloodlights, makeCar, makeRain, type City } from './scene';
+import { buildWorld, buildFloodlights, makeCar, makeRain, loadCarModel, carModelLoaded, type City } from './scene';
 
 const params = new URLSearchParams(location.search);
 const OPTS = {
@@ -739,6 +739,9 @@ function startSimplePitScene() {
   }, 'PIT STOP', `${p.team.name} crew · new tyres`);
 }
 
+// --- the Blender car: loaded in the background; races started before it arrives use the procedural car ---
+loadCarModel().catch(e => console.warn('car model unavailable', e));
+
 // --- people: loaded in the background; until then the old stand-ins are used ---
 let people: People | null = null;
 People.load().then(p => { people = p; if (race && !driverRig) seatDriver(); }).catch(e => console.warn('people models unavailable', e));
@@ -954,4 +957,4 @@ requestAnimationFrame(frame);
 // e2e tests and console debugging
 Object.assign(window, { __game: { get race() { return race; }, touch, place,
   conditions: () => ({ time: TIMES[lit?.time ?? 0].name, weather: WEATHER[lit?.weather ?? 0].name, sun: TIMES[lit?.time ?? 0].sun, raining: rain.visible, floodlights: !!world?.getObjectByName('floodlights')?.visible }),
-  stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people }), three: { renderer, scene, sky } } });
+  stats: () => ({ pitArrows: !!world?.getObjectByName('pitArrows')?.visible, buildings: world?.userData.buildings ?? 0, tunnels: world?.userData.tunnels ?? 0, fans: world?.userData.fans ?? 0, calls: renderer.info.render.calls, driver: !!driverRig, people: !!people, carModel: carModelLoaded(), blenderCars: carMeshes.filter(m => m.userData.blender).length }), three: { renderer, scene, sky } } });
